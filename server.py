@@ -3,15 +3,18 @@ FastAPI backend wrapping the existing RAG pipeline as REST API endpoints.
 Serves the static frontend and exposes /api/chat, /api/quiz, /api/health.
 """
 
+import logging
 import re
 import time
+import threading
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -20,10 +23,15 @@ from config import (
     AGENT_DEGRADED_KEYWORDS,
     DIRECT_RAG_DOC_LIMIT,
     FOLLOW_UP_MAX_WORDS,
+    GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+    GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR,
     GOOGLE_API_KEY,
     LLM_MODEL,
     MAX_CHAT_HISTORY_MESSAGES,
     NOT_COVERED_RESPONSE,
+    RATE_LIMIT_CHAT_PER_MIN,
+    RATE_LIMIT_HEALTH_PER_MIN,
+    RATE_LIMIT_QUIZ_PER_MIN,
     REPETITION_SIMILARITY_THRESHOLD,
     RETRYABLE_API_ERROR_KEYWORDS,
     SELF_INTRODUCTION_RESPONSE,
@@ -31,6 +39,8 @@ from config import (
     SYSTEM_PROMPT,
     ChatGoogleGenerativeAI,
 )
+
+logger = logging.getLogger("amicus")
 from data_loader import load_all_documents
 from hybrid_retriever import (
     build_hybrid_retriever,
@@ -42,6 +52,87 @@ from quiz_generator import generate_quiz
 from rag_pipeline import build_vector_store, chunk_documents, load_vector_store, resolve_persist_dir
 
 _backend = {}
+
+# ─── Rate limiter (per-IP + global, sliding window, no external deps) ───
+
+_rate_buckets: dict[str, list[float]] = defaultdict(list)
+_rate_lock = threading.Lock()
+_rate_call_count = 0
+_BUCKET_GC_INTERVAL = 300
+
+_INPUT_MAX_MESSAGE_LEN = 2000
+_INPUT_MAX_HISTORY_ITEMS = 20
+_INPUT_MAX_HISTORY_CONTENT_LEN = 1000
+_INPUT_MAX_TOPIC_LEN = 200
+_INPUT_MAX_QUIZ_QUESTIONS = 5
+
+_PROMPT_INJECTION_PATTERNS = re.compile(
+    r"(?:ignore\s+(?:all\s+)?(?:previous|above|prior)\s+(?:instructions?|prompts?|rules?))"
+    r"|(?:you\s+are\s+now\b)"
+    r"|(?:system\s*:\s)"
+    r"|(?:assistant\s*:\s)"
+    r"|(?:\[INST\])"
+    r"|(?:<\|(?:system|user|assistant|im_start|im_end)\|>)"
+    r"|(?:###\s*(?:System|Instruction|Human|Assistant)\s*:)",
+    re.IGNORECASE,
+)
+
+
+def _check_rate_limit(client_ip: str, endpoint: str, max_requests: int, window_sec: int = 60) -> bool:
+    global _rate_call_count
+    key = f"{client_ip}:{endpoint}"
+    now = time.monotonic()
+    cutoff = now - window_sec
+    with _rate_lock:
+        _rate_call_count += 1
+        if _rate_call_count >= _BUCKET_GC_INTERVAL:
+            _rate_call_count = 0
+            empty_keys = [k for k, v in _rate_buckets.items() if not v or v[-1] < now - 3600]
+            for k in empty_keys:
+                del _rate_buckets[k]
+        bucket = _rate_buckets[key]
+        _rate_buckets[key] = [t for t in bucket if t > cutoff]
+        if len(_rate_buckets[key]) >= max_requests:
+            return False
+        _rate_buckets[key].append(now)
+        return True
+
+
+def _check_global_rate_limit(endpoint: str, max_requests: int) -> bool:
+    return _check_rate_limit("__global__", endpoint, max_requests, window_sec=3600)
+
+
+def _get_client_ip(request: Request) -> str:
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _sanitize_user_input(text: str) -> str:
+    return _PROMPT_INJECTION_PATTERNS.sub("", text).strip()
+
+
+RATE_LIMIT_RESPONSE = JSONResponse(
+    status_code=429,
+    content={
+        "answer": "🪶 You're sending requests a bit too quickly. Please wait a moment and try again.",
+        "grounding_mode": "none",
+        "sources": [],
+    },
+)
+
+GLOBAL_RATE_LIMIT_RESPONSE = JSONResponse(
+    status_code=429,
+    content={
+        "answer": "🪶 Amicus is receiving a lot of requests right now. Please try again in a few minutes.",
+        "grounding_mode": "none",
+        "sources": [],
+    },
+)
 
 GROUNDING_MODE_EXACT_AUTHORITY = "exact_authority_match"
 GROUNDING_MODE_AGENT_STEPS = "agent_intermediate_steps"
@@ -388,10 +479,10 @@ def _init_backend():
             hybrid = build_hybrid_retriever(vs, chunks)
             executor = build_agent(vs, chunks)
             _backend.update(vs=vs, hybrid=hybrid, executor=executor, chunks=chunks, persist_dir=persist_dir)
-            print("Backend loaded from existing vector store.")
+            logger.info("Backend loaded from existing vector store.")
             return
         except Exception as e:
-            print(f"Failed to load existing store, rebuilding: {e}")
+            logger.warning("Failed to load existing store, rebuilding: %s", e)
 
     docs = load_all_documents()
     if not docs:
@@ -401,14 +492,14 @@ def _init_backend():
     hybrid = build_hybrid_retriever(vs, chunks)
     executor = build_agent(vs, chunks)
     _backend.update(vs=vs, hybrid=hybrid, executor=executor, chunks=chunks, persist_dir=persist_dir)
-    print("Backend initialized with fresh vector store.")
+    logger.info("Backend initialized with fresh vector store.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_backend()
     yield
-    print("[SYSTEM] 正在关闭服务，清理后端资源...")
+    logger.info("Shutting down, cleaning up backend resources...")
     _backend.clear()
 
 
@@ -1068,7 +1159,7 @@ def _retrieve_docs(query: str, *, k: int = DIRECT_RAG_DOC_LIMIT) -> list:
     try:
         documents = _backend["hybrid"].invoke(query)[:k]
     except Exception as e:
-        print(f"[WARN] Hybrid retrieval failed, falling back to BM25: {e}")
+        logger.warning("Hybrid retrieval failed, falling back to BM25: %s", e)
 
     if documents:
         return documents[:k]
@@ -1239,9 +1330,22 @@ def _extract_agent_sources(result: dict) -> list[dict]:
 
 
 @app.post("/api/chat")
-def chat_endpoint(req: ChatRequest):
-    history = req.history or []
-    message = _clean_text(req.message)
+def chat_endpoint(req: ChatRequest, request: Request):
+    client_ip = _get_client_ip(request)
+    if not _check_rate_limit(client_ip, "chat", RATE_LIMIT_CHAT_PER_MIN):
+        logger.warning("Rate limit hit: %s on /api/chat", client_ip)
+        return RATE_LIMIT_RESPONSE
+    if not _check_global_rate_limit("chat", GLOBAL_RATE_LIMIT_CHAT_PER_HOUR):
+        logger.warning("Global rate limit hit on /api/chat (triggered by %s)", client_ip)
+        return GLOBAL_RATE_LIMIT_RESPONSE
+
+    raw_message = (req.message or "")[:_INPUT_MAX_MESSAGE_LEN]
+    history = (req.history or [])[:_INPUT_MAX_HISTORY_ITEMS]
+    for msg in history:
+        if isinstance(msg, dict) and "content" in msg:
+            msg["content"] = (msg["content"] or "")[:_INPUT_MAX_HISTORY_CONTENT_LEN]
+    message = _sanitize_user_input(_clean_text(raw_message))
+    logger.info("Chat request: ip=%s msg=%.80s", client_ip, message)
 
     # Layer 1: Self-introduction
     if _looks_like_self_intro(message):
@@ -1297,7 +1401,7 @@ def chat_endpoint(req: ChatRequest):
             if any(kw in error_str for kw in RETRYABLE_API_ERROR_KEYWORDS) and attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"[CHAT ERROR] Agent failed: {api_err}")
+            logger.error("Agent failed: %s", api_err)
             agent_failed = True
             break
 
@@ -1345,7 +1449,7 @@ def chat_endpoint(req: ChatRequest):
                     sources=sources,
                 )
         except Exception as fallback_err:
-            print(f"[CHAT WARN] Direct RAG fallback failed: {fallback_err}")
+            logger.warning("Direct RAG fallback failed: %s", fallback_err)
 
         # Layer 5: Minimal formal answer (absolute last resort with docs)
         minimal = _build_minimal_formal_answer(query_context, fallback_docs)
@@ -1365,22 +1469,42 @@ def chat_endpoint(req: ChatRequest):
 
 
 @app.post("/api/quiz")
-def quiz_endpoint(req: QuizRequest):
+def quiz_endpoint(req: QuizRequest, request: Request):
+    client_ip = _get_client_ip(request)
+    if not _check_rate_limit(client_ip, "quiz", RATE_LIMIT_QUIZ_PER_MIN):
+        logger.warning("Rate limit hit: %s on /api/quiz", client_ip)
+        return JSONResponse(
+            status_code=429,
+            content={"quiz": "🪶 You're generating quizzes a bit too quickly. Please wait a moment and try again."},
+        )
+    if not _check_global_rate_limit("quiz", GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR):
+        logger.warning("Global rate limit hit on /api/quiz (triggered by %s)", client_ip)
+        return JSONResponse(
+            status_code=429,
+            content={"quiz": "🪶 Amicus is receiving a lot of requests right now. Please try again in a few minutes."},
+        )
+
+    topic = _sanitize_user_input(_clean_text((req.topic or "")[:_INPUT_MAX_TOPIC_LEN]))
+    num_questions = max(1, min(req.num_questions, _INPUT_MAX_QUIZ_QUESTIONS))
+    logger.info("Quiz request: ip=%s topic=%.80s n=%d", client_ip, topic, num_questions)
+
     for attempt in range(3):
         try:
-            result = generate_quiz(req.topic, _backend["vs"], num_questions=req.num_questions)
+            result = generate_quiz(topic, _backend["vs"], num_questions=num_questions)
             return {"quiz": result}
         except Exception as e:
             error_str = str(e).lower()
             if any(kw in error_str for kw in ["503", "unavailable", "rate limit"]) and attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"[QUIZ ERROR] {e}")
+            logger.error("Quiz failed: %s", e)
             return {"quiz": "🪶 抱歉，Amicus 在查阅卷宗时遇到了阻碍。暂时无法为您生成测验，请稍后再试。"}
 
 
 @app.get("/api/health")
-async def health_endpoint():
+async def health_endpoint(request: Request):
+    if not _check_rate_limit(_get_client_ip(request), "health", RATE_LIMIT_HEALTH_PER_MIN):
+        return JSONResponse(status_code=429, content={"status": "rate_limited"})
     return {"status": "ok", "backend_loaded": bool(_backend)}
 
 
