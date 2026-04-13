@@ -1,0 +1,128 @@
+[
+    {
+        "id": 1,
+        "question": "What is a for loop in Python and how do you use it?",
+        "expected_topic": "python",
+        "expected_keywords": ["loop", "iterate", "range", "for"],
+        "expected_source_contains": "python_tutorial"
+    },
+    {
+        "id": 2,
+        "question": "Explain the difference between a list and a tuple in Python.",
+        "expected_topic": "python",
+        "expected_keywords": ["list", "tuple", "mutable", "immutable"],
+        "expected_source_contains": "python"
+    },
+    {
+        "id": 3,
+        "question": "How do you define a function in Python?",
+        "expected_topic": "python",
+        "expected_keywords": ["def", "function", "parameter", "return"],
+        "expected_source_contains": "python"
+    },
+    {
+        "id": 4,
+        "question": "What are Python dictionaries and how are they used?",
+        "expected_topic": "python",
+        "expected_keywords": ["dictionary", "key", "value", "dict"],
+        "expected_source_contains": "python"
+    },
+    {
+        "id": 5,
+        "question": "What is a p-value and how do you interpret it?",
+        "expected_topic": "statistics",
+        "expected_keywords": ["probability", "null hypothesis", "significance", "p-value"],
+        "expected_source_contains": "scipy"
+    },
+    {
+        "id": 6,
+        "question": "How do you perform a T-test in Python using SciPy?",
+        "expected_topic": "statistics",
+        "expected_keywords": ["t-test", "scipy", "ttest", "sample"],
+        "expected_source_contains": "scipy"
+    },
+    {
+        "id": 7,
+        "question": "What is linear regression and when should it be used?",
+        "expected_topic": "statistics",
+        "expected_keywords": ["regression", "linear", "dependent", "independent"],
+        "expected_source_contains": "statsmodels"
+    },
+    {
+        "id": 8,
+        "question": "What is hypothesis testing?",
+        "expected_topic": "statistics",
+        "expected_keywords": ["hypothesis", "null", "alternative", "test"],
+        "expected_source_contains": "statistics"
+    },
+    {
+        "id": 9,
+        "question": "How does tokenization work in NLP?",
+        "expected_topic": "nlp",
+        "expected_keywords": ["token", "text", "word", "split"],
+        "expected_source_contains": "spacy"
+    },
+    {
+        "id": 10,
+        "question": "What is named entity recognition (NER)?",
+        "expected_topic": "nlp",
+        "expected_keywords": ["entity", "NER", "recognition", "name"],
+        "expected_source_contains": "spacy"
+    },
+    {
+        "id": 11,
+        "question": "How do you perform sentiment analysis on text?",
+        "expected_topic": "nlp",
+        "expected_keywords": ["sentiment", "analysis", "positive", "negative"],
+        "expected_source_contains": "nlp"
+    },
+    {
+        "id": 12,
+        "question": "What is part-of-speech tagging?",
+        "expected_topic": "nlp",
+        "expected_keywords": ["POS", "tag", "noun", "verb"],
+        "expected_source_contains": "spacy"
+    },
+    {
+        "id": 13,
+        "question": "What does Article 1062 of the Civil Code say about property division?",
+        "expected_topic": "legal",
+        "expected_keywords": ["property", "division", "1062", "civil"],
+        "expected_source_contains": "legal_data"
+    },
+    {
+        "id": 14,
+        "question": "What are the legal grounds for divorce in Chinese family law?",
+        "expected_topic": "legal",
+        "expected_keywords": ["divorce", "grounds", "marriage", "law"],
+        "expected_source_contains": "legal_data"
+    },
+    {
+        "id": 15,
+        "question": "How is child custody determined in Chinese family law?",
+        "expected_topic": "legal",
+        "expected_keywords": ["custody", "child", "parent", "court"],
+        "expected_source_contains": "legal_data"
+    },
+    {
+        "id": 16,
+        "question": "How would I write a Python for loop to extract and clean the text of Article 1062 about marital property from the Civil Code?",
+        "expected_topic": "python+legal",
+        "expected_keywords": ["for", "loop", "1062", "property"],
+        "expected_source_contains": "legal_data"
+    },
+    {
+        "id": 17,
+        "question": "After tokenizing court ruling texts with spaCy, how could I use SciPy to run a T-test to check whether property division outcomes differ significantly across regions?",
+        "expected_topic": "nlp+statistics",
+        "expected_keywords": ["tokeniz", "t-test", "scipy", "statistic"],
+        "expected_source_contains": "spacy"
+    },
+    {
+        "id": 18,
+        "question": "Can you explain how to use Python lists and dictionaries to build a structured dataset of legal cases, and then apply regression analysis to find patterns in sentencing outcomes?",
+        "expected_topic": "python+statistics",
+        "expected_keywords": ["list", "dictionary", "regression", "variable"],
+        "expected_source_contains": "python"
+    }
+]
