@@ -1,6 +1,6 @@
 .env
 chroma_db/
-chroma_db_*/
+chroma_db_strategy_B/
 __pycache__/
 *.pyc
 *.pyo
