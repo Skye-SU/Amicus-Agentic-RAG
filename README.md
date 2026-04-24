@@ -1,13 +1,11 @@
 ---
-
-## title: Amicus
+title: Amicus
 emoji: ⚖️
 colorFrom: indigo
 colorTo: gray
 sdk: docker
 pinned: false
-
-
+---
 
 # ⚖️ Amicus
 
