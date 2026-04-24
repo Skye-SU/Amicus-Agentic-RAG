@@ -28,7 +28,7 @@ def llm_judge_score(question: str, answer: str, context: str) -> dict:
 
     llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
     prompt = f"""
-    You are an expert evaluator for a Computational Law course. Score the given Answer from 1 to 5 on two metrics:
+    You are an expert evaluator for a RAG tutor that teaches technical concepts through legal analogies. Score the given Answer from 1 to 5 on two metrics:
     1. Faithfulness: Is the answer strictly derived from the Context without hallucinating details not present?
     2. Relevance: Does the answer directly and concisely address the Question?
 
