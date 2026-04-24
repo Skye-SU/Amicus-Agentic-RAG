@@ -1,5 +1,5 @@
 """
-ReAct Agent with topic-specific search tools for the CLS Course Assistant.
+ReAct Agent with topic-specific search tools for Amicus.
 """
 
 from langchain_classic.agents import AgentExecutor, Tool, create_react_agent
@@ -91,7 +91,7 @@ def build_tools(vectorstore, documents=None) -> list[Tool]:
                 all_documents=documents,
             ),
             description=(
-                "Search statistics course materials. Use when the student asks "
+                "Search the statistics reference library. Use when the student asks "
                 "about T-tests, p-values, regression, hypothesis testing, or statistical concepts."
             ),
         ),
@@ -104,7 +104,7 @@ def build_tools(vectorstore, documents=None) -> list[Tool]:
                 all_documents=documents,
             ),
             description=(
-                "Search NLP course materials. Use when the student asks "
+                "Search the NLP reference library. Use when the student asks "
                 "about text processing, tokenization, sentiment analysis, or natural language processing."
             ),
         ),
@@ -155,8 +155,8 @@ BEFORE writing your Action Input.
 Example:
   History: [Assistant said: "If you'd like, I can walk you through a Python code example from the notebooks."]
   User says: "continue" or "OK" or "yes please"
-  You resolve: "The user wants to see a Python code example from the course notebooks."
-  Then search: search_python_basics("Python code example from course notebooks")
+  You resolve: "The user wants to see a Python code example from the reference notebooks."
+  Then search: search_python_basics("Python code example from reference notebooks")
 
 If the input contains a [RESOLVED STANDALONE QUESTION] section, treat THAT section as the real question to answer.
 Use the earlier context only to resolve references. Do not repeat the previous assistant answer unless the new

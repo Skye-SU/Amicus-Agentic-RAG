@@ -134,7 +134,7 @@ def format_size(size_bytes: int) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download Amicus public course materials."
+        description="Download Amicus public reference materials."
     )
     parser.add_argument(
         "--dry-run",

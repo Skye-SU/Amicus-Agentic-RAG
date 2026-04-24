@@ -142,7 +142,7 @@ GROUNDING_MODE_NONE = "none"
 
 GROUNDING_MODE_DETAILS = {
     GROUNDING_MODE_EXACT_AUTHORITY: {
-        "source_basis": "Answer was built directly from an exact legal authority match in the course materials.",
+        "source_basis": "Answer was built directly from an exact legal authority match in the reference library.",
         "has_reliable_sources": True,
     },
     GROUNDING_MODE_AGENT_STEPS: {
@@ -334,7 +334,7 @@ TOPIC_HINTS = {
 SUPPORTED_COURSE_TOPICS = ("python", "statistics", "nlp", "legal_knowledge")
 FIRST_TURN_GREETING = "🪶 Hello and welcome! I'm Amicus."
 FIRST_TURN_CLOSING = (
-    "Feel free to ask me anything about the course — whether it's Python, statistics, NLP, or legal analysis."
+    "Feel free to ask me about anything you're learning — whether it's Python, statistics, NLP, or legal analysis."
 )
 NOT_COVERED_MESSAGE_LOWER = NOT_COVERED_RESPONSE.lower()
 STOPWORDS = {
@@ -608,7 +608,7 @@ def _requested_option_pair(query_context: dict) -> tuple[str, str]:
             return extracted
 
     return (
-        "Search the most relevant legal provisions in the course materials.",
+        "Search the most relevant legal provisions in the reference library.",
         "Analyze the differences between Chinese and U.S. property-division approaches based on those materials.",
     )
 
@@ -666,7 +666,7 @@ def _build_minimal_formal_answer(query_context: dict, docs: list) -> str:
         return ""
 
     lines = [
-        f"Here is the core idea from the most relevant course materials: {snippets[0]}.",
+        f"Here is the core idea from the most relevant reference materials: {snippets[0]}.",
     ]
     if len(snippets) > 1:
         lines.append("")
@@ -707,7 +707,7 @@ def _ensure_first_turn_style(answer: str, query_context: dict) -> str:
         styled = f"{FIRST_TURN_GREETING} {styled}".strip()
 
     if not _wants_exact_two_numbered_options(query_context):
-        if "feel free to ask me anything about the course" not in lowered:
+        if "feel free to ask me" not in lowered:
             styled = f"{styled}\n\n{FIRST_TURN_CLOSING}"
     return styled
 
@@ -1143,11 +1143,7 @@ def _chat_response(
 
 def _should_show_sources(answer: str) -> bool:
     lowered = (answer or "").lower()
-    return (
-        "quiz mode" not in lowered
-        and "not covered" not in lowered
-        and "your professor or ta" not in lowered
-    )
+    return "quiz mode" not in lowered and "not covered" not in lowered
 
 
 def _retrieve_docs(query: str, *, k: int = DIRECT_RAG_DOC_LIMIT) -> list:
@@ -1235,7 +1231,7 @@ def _answer_repeats_history(answer: str, history: list) -> bool:
 def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[str, list[dict]]:
     if not docs:
         return (
-            "🪶 I couldn't find enough relevant course material to answer that reliably right now. "
+            "🪶 I couldn't find enough relevant reference material to answer that reliably right now. "
             "Please try rephrasing the question more specifically.",
             [],
         )
@@ -1262,7 +1258,7 @@ def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[st
         "Then deepen the explanation with one concrete legal analogy when appropriate; if the student explicitly asks for a legal analogy, make that analogy a central part of the answer rather than a passing remark. "
         "After that, clarify 2-3 important nuances, misconceptions, or practical implications so the student leaves with real understanding, not just a summary. "
         "Prefer fully developed explanations over terse summaries. "
-        "Do NOT write in retrieval-summary style, and do NOT use phrases like 'Based on the most relevant course materials,' 'Here is the core idea,' or 'Key teaching points.' "
+        "Do NOT write in retrieval-summary style, and do NOT use phrases like 'Based on the most relevant reference materials,' 'Here is the core idea,' or 'Key teaching points.' "
         "When showing code, explain every line in plain English. "
         "Keep the tone warm, thoughtful, and intellectually serious. "
         "End naturally, or with one light next-step invitation if it feels helpful."
@@ -1277,7 +1273,7 @@ def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[st
     )
     fallback_prompt = f"""{SYSTEM_PROMPT}
 
-Here are the relevant course materials:
+Here are the relevant reference materials:
 
 {context}
 

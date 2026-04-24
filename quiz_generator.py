@@ -1,5 +1,5 @@
 """
-Quiz generation feature: generates multiple-choice questions from course materials.
+Quiz generation feature: generates multiple-choice questions from the reference library.
 """
 
 from langchain_core.documents import Document
@@ -10,9 +10,9 @@ from hybrid_retriever import search_by_topic
 
 QUIZ_PROMPT = PromptTemplate(
     input_variables=["topic", "num_questions", "context"],
-    template="""Based on the following course materials about "{topic}", generate {num_questions} multiple-choice quiz questions.
+    template="""Based on the following reference materials about "{topic}", generate {num_questions} multiple-choice quiz questions.
 
-COURSE MATERIALS:
+REFERENCE MATERIALS:
 {context}
 
 STRICT OUTPUT FORMAT — you MUST follow this format EXACTLY for each question, with no deviations:
@@ -27,7 +27,7 @@ D) [Option D text]
 
 Correct Answer: [Single letter: A, B, C, or D]
 
-Explanation: [Brief explanation of why this is the correct answer, referencing the course materials]
+Explanation: [Brief explanation of why this is the correct answer, referencing the reference materials]
 
 Source: [Document name and section/page where this concept is covered]
 ---
@@ -41,14 +41,14 @@ RULES:
 - Start your output directly with --- followed by the first question.
 
 QUALITY REQUIREMENTS (VERY IMPORTANT):
-- Students are legal scholars with ZERO programming experience. Use PLAIN ENGLISH.
+- Learners have a legal background and little or no programming experience. Use PLAIN ENGLISH.
   BAD question: "In which type of numerical analysis are p-values relevant?"
   GOOD question: "When would you most likely use a p-value in legal research?"
 - Frame questions around LEGAL research scenarios whenever possible.
   BAD: "What does a for loop do?"
   GOOD: "A researcher wants to count how many times the word 'negligence' appears in 100 court rulings. Which Python concept would be most useful?"
 - Each Explanation MUST have TWO parts: (1) state the correct answer clearly, (2) explain WHY using a concrete legal example.
-  BAD explanation: "The course outline links p-values to comparing means."
+  BAD explanation: "The reference says p-values relate to comparing means."
   GOOD explanation: "A p-value tells you whether a difference is statistically meaningful. For example, if male defendants get 2-year longer sentences on average, the p-value tells you whether this gap is real or just random variation in the data."
 - Wrong options must be PLAUSIBLE but clearly wrong. Do NOT use absurd distractors like "updating database records for page rank" that make the quiz look unprofessional.
 - Questions should test CONCEPTUAL understanding, not trivia or memorization.
@@ -64,7 +64,7 @@ def generate_quiz(
 ) -> str:
     """
     Generate a quiz on the given topic.
-    1. Retrieve relevant course material
+    1. Retrieve relevant reference material
     2. Ask LLM to generate multiple-choice questions
     3. Return formatted quiz string
     """
@@ -100,7 +100,7 @@ def generate_quiz(
     results = search_by_topic(vectorstore, topic, search_topic, k=6)
 
     if not results:
-        return f"No course materials found for topic '{topic}'. Available topics: python, statistics, nlp, legal."
+        return f"No reference materials found for topic '{topic}'. Available topics: python, statistics, nlp, legal."
 
     context = "\n\n---\n\n".join(
         f"[{doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"

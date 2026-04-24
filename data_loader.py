@@ -1,5 +1,5 @@
 """
-Multi-format document loader for the CLS Course Assistant.
+Multi-format document loader for Amicus.
 Supports: .md, .docx, .pdf, .ipynb, .py (structured legal data)
 """
 
@@ -109,7 +109,7 @@ def _humanize_identifier(value: str) -> str:
             cleaned_tokens.append(token)
         else:
             cleaned_tokens.append(token.capitalize())
-    return " ".join(cleaned_tokens) or "Course Material"
+    return " ".join(cleaned_tokens) or "Reference"
 
 
 def _truncate_label(text: str, *, limit: int = 96) -> str:

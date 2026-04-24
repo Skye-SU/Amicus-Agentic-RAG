@@ -435,7 +435,7 @@ const TRIVIA_FACTS = [
     'For the record: TF-IDF stands for "Term Frequency–Inverse Document Frequency" — it measures how important a word is to a document in a collection.',
     'Did you know? The first known legal code, the Code of Ur-Nammu, was written around 2100 BCE in ancient Sumer.',
     'Fun fact: The Chinese judiciary publishes over 20 million court rulings online — one of the largest legal open datasets in the world.',
-    'Good to know: Computational legal studies can process more court rulings in one hour than a paralegal can read in an entire year.',
+    'Good to know: Computer-assisted legal research can process more court rulings in one hour than a paralegal can read in an entire year.',
     'Did you know? In common law, the "reasonable person" standard has no single agreed-upon definition across all jurisdictions.',
     'Here\'s a good one: The concept of "precedent" — following earlier court decisions — dates back to 12th-century English law.',
     'In case you wondered: Legal NLP researchers often build "blacklists" of common boilerplate terms to filter noise from court ruling datasets.',
@@ -541,7 +541,7 @@ function humanizeIdentifier(value) {
         if (lowered === 'py4e') return 'PY4E';
         if (/^\d+$/.test(token)) return token;
         return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
-    }).join(' ') || 'Course Material';
+    }).join(' ') || 'Reference';
 }
 
 function looksLikeSourceNoise(text) {
@@ -755,7 +755,7 @@ function resolveSourcePresentation(candidate) {
 function parseSourceReference(rawSource) {
     const info = {
         raw: normalizeSourceText(rawSource),
-        title: 'Course Material',
+        title: 'Reference',
         badge: 'Source',
         meta: [],
         context: '',
@@ -865,7 +865,7 @@ function buildSourceCardData(source) {
 
     return {
         badge: fields.material_type || parsedRef.badge,
-        title: title || 'Course Material',
+        title: title || 'Reference',
         context,
         meta: dedupeItems([...meta, ...tags]),
         preview: selectSourcePreview(parsedText),

@@ -1,5 +1,5 @@
 """
-Legacy Streamlit UI for the CLS Course Assistant.
+Legacy Streamlit UI for Amicus.
 Provides Chat mode (Q&A with RAG) and Quiz mode (auto-generated quizzes).
 """
 
@@ -25,7 +25,7 @@ from quiz_generator import generate_quiz
 from data_loader import load_all_documents
 
 st.set_page_config(
-    page_title="CLS Course Assistant",
+    page_title="Amicus",
     page_icon="⚖️",
     layout="wide",
 )
@@ -68,7 +68,7 @@ EXAMPLE_QUESTIONS = [
 ]
 
 
-@st.cache_resource(show_spinner="Loading course materials...")
+@st.cache_resource(show_spinner="Loading reference library...")
 def init_backend():
     """Initialize the vector store, hybrid retriever, and agent."""
     persist_dir = f"{CHROMA_PERSIST_DIR}_strategy_A"
@@ -100,10 +100,10 @@ def init_backend():
 
 # --- Sidebar ---
 with st.sidebar:
-    st.title("⚖️ CLS Course Assistant")
+    st.title("⚖️ Amicus")
     st.markdown(
-        "An intelligent teaching assistant for the "
-        "**Computational Legal Studies** workshop."
+        "An experimental RAG tutor that explains programming, "
+        "statistics, and NLP through **legal analogies**."
     )
     if os.getenv("AMICUS_SMOKE_TEST") == "1":
         st.caption("Smoke test mode: external Gemini embedding calls are disabled.")
@@ -139,7 +139,7 @@ vs, hybrid, executor = init_backend()
 # --- Chat Mode ---
 if mode == "💬 Chat":
     st.header("💬 Ask a Question")
-    st.caption("Ask about Python, Statistics, NLP, or Legal topics from the course materials.")
+    st.caption("Ask about Python, Statistics, NLP, or Legal topics from the reference library.")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -166,7 +166,7 @@ if mode == "💬 Chat":
             st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            with st.spinner("Searching course materials..."):
+            with st.spinner("Searching reference library..."):
                 try:
                     # Build conversation history for context
                     history_text = ""
@@ -215,7 +215,7 @@ if mode == "💬 Chat":
                         )
                     else:
                         answer = (
-                            "🪶 I encountered an unexpected issue while searching the course materials. "
+                            "🪶 I encountered an unexpected issue while searching the reference library. "
                             "Please try rephrasing your question or try again in a moment.\n\n"
                             f"*Technical detail: {error_msg[:150]}*"
                         )
@@ -249,7 +249,7 @@ if mode == "💬 Chat":
                             for doc in fallback_docs[:4]
                         ]
                     except Exception:
-                        sources = [{"source": "Course Materials", "text": "Source details unavailable. Please restart the app if this persists."}]
+                        sources = [{"source": "Reference", "text": "Source details unavailable. Please restart the app if this persists."}]
 
                 # Deduplicate by source name, keep first 4
                 seen = set()
@@ -266,8 +266,7 @@ if mode == "💬 Chat":
             st.markdown(answer)
 
             show_sources = ("quiz mode" not in answer.lower()
-                            and "not covered" not in answer.lower()
-                            and "your professor or ta" not in answer.lower())
+                            and "not covered" not in answer.lower())
             if show_sources and sources:
                 with st.expander("📎 Sources"):
                     for src in sources:
