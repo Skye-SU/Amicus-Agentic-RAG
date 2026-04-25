@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --requirement requirements.txt
 
 COPY . .
+# bust cache: 2026-04-25
 RUN python -m compileall \
     server.py agent.py config.py data_loader.py hybrid_retriever.py quiz_generator.py \
     app.py rag_pipeline.py scripts tests
