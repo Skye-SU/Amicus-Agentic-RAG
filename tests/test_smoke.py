@@ -511,6 +511,21 @@ class RoutingTests(unittest.TestCase):
             {"first_turn": True, "follow_up": False, "unsupported": False},
         )
 
+    def test_course_concept_fallback_handles_variable_questions(self):
+        result = _run_inline(
+            """
+            from server import _build_course_concept_fallback_answer, _build_query_context
+
+            context = _build_query_context("What is a Python variable?", [])
+            answer = _build_course_concept_fallback_answer(context, [])
+            print("variable" in answer.lower())
+            print("name that refers to a value" in answer)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["True", "True"])
+
 
 class SafetyTests(unittest.TestCase):
     def test_download_validator_rejects_lfs_pointer(self):

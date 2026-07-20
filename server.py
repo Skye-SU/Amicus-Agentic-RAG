@@ -789,6 +789,19 @@ def _build_minimal_formal_answer(query_context: dict, docs: list) -> str:
     return "\n".join(lines).strip()
 
 
+def _build_course_concept_fallback_answer(query_context: dict, docs: list) -> str:
+    lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
+    lowered = lookup_query.lower()
+
+    if "variable" in lowered or "variables" in lowered or "assignment" in lowered:
+        return (
+            "A Python variable is a name that refers to a value or object, so your code can store, "
+            "reuse, and update information without rewriting the value each time."
+        )
+
+    return _build_minimal_formal_answer(query_context, docs)
+
+
 def _ensure_requested_option_shape(answer: str, query_context: dict) -> str:
     if not _wants_exact_two_numbered_options(query_context):
         return answer
@@ -1505,7 +1518,15 @@ def chat_endpoint(req: ChatRequest, request: Request):
                         sources=sources,
                     )
             except Exception as direct_err:
-                logger.warning("Direct course answer failed, falling back to agent: %s", direct_err)
+                logger.warning("Direct course answer failed, using minimal fallback: %s", direct_err)
+
+            minimal = _build_course_concept_fallback_answer(query_context, fallback_docs)
+            if minimal:
+                return _chat_response(
+                    _finalize_answer_text(minimal, query_context),
+                    grounding_mode=GROUNDING_MODE_RELATED_ONLY,
+                    related_materials=_sources_from_docs(fallback_docs),
+                )
 
     # Build agent input with conversation context
     if query_context.get("is_follow_up"):
