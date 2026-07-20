@@ -793,10 +793,32 @@ def _build_course_concept_fallback_answer(query_context: dict, docs: list) -> st
     lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
     lowered = lookup_query.lower()
 
+    if "p-value" in lowered or "p value" in lowered or "pvalue" in lowered:
+        return (
+            "A p-value is a way to ask: if there were really no effect, how surprising would this evidence be? "
+            "In legal terms, imagine the null hypothesis as the defendant's starting presumption: nothing unusual has been proven yet. "
+            "The p-value measures how unusual your observed evidence would look under that starting presumption.\n\n"
+            "A small p-value does not prove your alternative theory is true. It says the evidence would be unlikely if the null hypothesis were true, "
+            "so you may have reason to doubt the null. That is why p-values are often compared to thresholds such as 0.05: the threshold is like a procedural standard "
+            "for deciding when the evidence is unusual enough to investigate the alternative explanation more seriously.\n\n"
+            "The most common mistake is to read a p-value as 'the probability that the null hypothesis is true.' It is not that. "
+            "It is the probability of seeing evidence this extreme, or more extreme, assuming the null hypothesis is true."
+        )
+
+    if "tokenization" in lowered or "tokenize" in lowered or "tokenizer" in lowered:
+        return (
+            "Tokenization is the process of splitting text into smaller units, called tokens, so a program can analyze language piece by piece. "
+            "A token might be a word, punctuation mark, number, or subword depending on the tokenizer. In a legal analogy, it is like separating a contract "
+            "into clauses, defined terms, citations, and punctuation before deciding what each part means.\n\n"
+            "This step matters because later NLP tasks depend on those boundaries. If a system splits text poorly, then search, entity recognition, statistics, "
+            "and downstream interpretation can all become less reliable."
+        )
+
     if "variable" in lowered or "variables" in lowered or "assignment" in lowered:
         return (
             "A Python variable is a name that refers to a value or object, so your code can store, "
-            "reuse, and update information without rewriting the value each time."
+            "reuse, and update information without rewriting the value each time. Think of it like a defined term in a contract: once you define "
+            "`Client` or `Purchase Price`, you can refer to that name later instead of rewriting the full value every time."
         )
 
     return _build_minimal_formal_answer(query_context, docs)
@@ -1347,6 +1369,25 @@ def _answer_is_degraded(answer: str) -> bool:
     return not lowered.strip() or any(keyword in lowered for keyword in AGENT_DEGRADED_KEYWORDS)
 
 
+def _answer_has_substantive_body(answer: str) -> bool:
+    normalized = _clean_text(answer)
+    if len(normalized) < 120:
+        return False
+
+    filler_patterns = [
+        FIRST_TURN_GREETING,
+        FIRST_TURN_CLOSING,
+        "That's a great topic to start our journey into computational thinking.",
+        "Here is how we can understand",
+        "Here is the core idea from the most relevant reference materials:",
+    ]
+    stripped = normalized
+    for pattern in filler_patterns:
+        stripped = stripped.replace(pattern, " ")
+    stripped = _clean_text(stripped)
+    return len(stripped) >= 80
+
+
 def _answer_repeats_history(answer: str, history: list) -> bool:
     previous_answer = _last_message(history, "assistant")
     if not previous_answer:
@@ -1511,7 +1552,7 @@ def chat_endpoint(req: ChatRequest, request: Request):
             try:
                 answer, sources = _direct_rag_answer(lookup_query, history, fallback_docs)
                 answer = _finalize_answer_text(answer, query_context)
-                if answer and not _answer_is_degraded(answer):
+                if answer and not _answer_is_degraded(answer) and _answer_has_substantive_body(answer):
                     return _chat_response(
                         answer,
                         grounding_mode=GROUNDING_MODE_DIRECT_RAG,

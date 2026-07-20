@@ -526,6 +526,44 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertEqual(result.stdout.splitlines(), ["True", "True"])
 
+    def test_course_concept_fallback_handles_p_value_questions(self):
+        result = _run_inline(
+            """
+            from server import _build_course_concept_fallback_answer, _build_query_context
+
+            context = _build_query_context("Explain what a p-value is using a legal analogy", [])
+            answer = _build_course_concept_fallback_answer(context, [])
+            print("null hypothesis" in answer.lower())
+            print("legal" in answer.lower())
+            print(len(answer) > 500)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["True", "True", "True"])
+
+    def test_shell_answer_is_not_substantive(self):
+        result = _run_inline(
+            """
+            from server import _answer_has_substantive_body
+
+            shell = (
+                "🪶 Hello and welcome! I'm Amicus. That's a great topic to start our journey into computational thinking. "
+                "Here is how we can understand\\n\\n"
+                "Feel free to ask me about anything you're learning — whether it's Python, statistics, NLP, or legal analysis."
+            )
+            real = (
+                "A p-value asks how surprising the observed evidence would be if the null hypothesis were true. "
+                "It does not tell you the probability that the null is true; it measures how unusual the data would be under that assumption."
+            )
+            print(_answer_has_substantive_body(shell))
+            print(_answer_has_substantive_body(real))
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["False", "True"])
+
 
 class SafetyTests(unittest.TestCase):
     def test_download_validator_rejects_lfs_pointer(self):
