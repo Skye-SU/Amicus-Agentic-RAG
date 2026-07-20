@@ -128,7 +128,6 @@ balance and auto-reload disabled. The app also ships with conservative default l
 | Chat requests per visitor per rolling day | 20 |
 | Quiz requests per visitor per rolling day | 6 |
 | Agent iterations per answer | 4 |
-| Chat/direct-RAG output token cap | 900 |
 | Quiz output token cap | 1200 |
 
 All of these can be adjusted through environment variables in `.env.example` without changing code.

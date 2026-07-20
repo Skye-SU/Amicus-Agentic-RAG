@@ -8,7 +8,6 @@ from langchain_classic.prompts import PromptTemplate
 from config import (
     AGENT_MAX_EXECUTION_TIME,
     GOOGLE_API_KEY,
-    LLM_MAX_OUTPUT_TOKENS,
     LLM_MODEL,
     LLM_REQUEST_TIMEOUT,
     LLM_TEMPERATURE,
@@ -188,7 +187,6 @@ def build_agent(vectorstore, documents=None) -> AgentExecutor:
         model=LLM_MODEL,
         temperature=LLM_TEMPERATURE,
         google_api_key=GOOGLE_API_KEY,
-        max_tokens=LLM_MAX_OUTPUT_TOKENS,
         request_timeout=LLM_REQUEST_TIMEOUT,
     )
 

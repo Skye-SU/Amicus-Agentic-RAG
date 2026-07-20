@@ -32,7 +32,6 @@ from config import (
     GOOGLE_API_KEY,
     IP_RATE_LIMIT_CHAT_PER_DAY,
     IP_RATE_LIMIT_QUIZ_PER_DAY,
-    LLM_MAX_OUTPUT_TOKENS,
     LLM_MODEL,
     LLM_REQUEST_TIMEOUT,
     MAX_CHAT_HISTORY_MESSAGES,
@@ -1461,7 +1460,6 @@ def _controlled_agentic_retrieval_answer(query_context: dict, history: list) -> 
         model=LLM_MODEL,
         temperature=0.1,
         google_api_key=GOOGLE_API_KEY,
-        max_tokens=LLM_MAX_OUTPUT_TOKENS,
         request_timeout=LLM_REQUEST_TIMEOUT,
     )
     prompt = f"""You are Amicus, a RAG tutor for legal professionals learning programming, statistics, and NLP.
@@ -1599,7 +1597,6 @@ def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[st
         model=LLM_MODEL,
         temperature=0.1,
         google_api_key=GOOGLE_API_KEY,
-        max_tokens=LLM_MAX_OUTPUT_TOKENS,
         request_timeout=LLM_REQUEST_TIMEOUT,
     )
     fallback_prompt = f"""{SYSTEM_PROMPT}

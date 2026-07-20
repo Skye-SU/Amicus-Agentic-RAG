@@ -150,7 +150,6 @@ class SmokeTests(unittest.TestCase):
                 "ip_chat_day": config.IP_RATE_LIMIT_CHAT_PER_DAY,
                 "ip_quiz_day": config.IP_RATE_LIMIT_QUIZ_PER_DAY,
                 "agent_iterations": config.MAX_AGENT_ITERATIONS,
-                "llm_tokens": config.LLM_MAX_OUTPUT_TOKENS,
                 "quiz_tokens": config.QUIZ_MAX_OUTPUT_TOKENS,
             }
             print("PAYLOAD::" + json.dumps(payload))
@@ -170,7 +169,6 @@ class SmokeTests(unittest.TestCase):
                 "ip_chat_day": 20,
                 "ip_quiz_day": 6,
                 "agent_iterations": 4,
-                "llm_tokens": 900,
                 "quiz_tokens": 1200,
             },
         )
