@@ -9,7 +9,6 @@ from config import (
     LLM_MODEL,
     LLM_REQUEST_TIMEOUT,
     LLM_TEMPERATURE,
-    QUIZ_MAX_OUTPUT_TOKENS,
     ChatGoogleGenerativeAI,
 )
 from hybrid_retriever import search_by_topic
@@ -84,7 +83,6 @@ def generate_quiz(
             model=LLM_MODEL,
             temperature=LLM_TEMPERATURE + 0.2,  # slightly more creative for quiz gen
             google_api_key=GOOGLE_API_KEY,
-            max_tokens=QUIZ_MAX_OUTPUT_TOKENS,
             request_timeout=LLM_REQUEST_TIMEOUT,
         )
 
