@@ -1494,7 +1494,7 @@ def chat_endpoint(req: ChatRequest, request: Request):
     fallback_docs = None
     if _should_use_direct_course_path(query_context):
         fallback_docs = _retrieve_docs(lookup_query)
-        if _docs_support_query(lookup_query, fallback_docs):
+        if fallback_docs:
             try:
                 answer, sources = _direct_rag_answer(lookup_query, history, fallback_docs)
                 answer = _finalize_answer_text(answer, query_context)
