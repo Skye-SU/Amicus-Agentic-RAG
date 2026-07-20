@@ -1475,7 +1475,11 @@ Reference observations:
 Student question:
 {lookup_query}
 
-Write a substantive teaching answer. Start with the core idea in plain English, make the requested analogy central when the student asks for one, then clarify the most important misconception or practical implication. Do not mention source filenames or say "based on the materials." Do not use ReAct labels such as Thought, Action, or Observation in the final answer.
+Write a substantive but compact teaching answer: 3-4 short paragraphs, or 2-3 short paragraphs plus at most 3 bullets. Finish in complete sentences.
+
+Accuracy rule for p-values: define a p-value as the probability of seeing evidence this extreme, or more extreme, assuming the null hypothesis is true. Do NOT define it as the probability that the effect happened by chance, the probability that the null hypothesis is true, or the probability that the alternative hypothesis is true.
+
+Start with the core idea in plain English, make the requested analogy central when the student asks for one, then clarify the most important misconception or practical implication. Do not mention source filenames or say "based on the materials." Do not use ReAct labels such as Thought, Action, or Observation in the final answer.
 """
 
     try:
