@@ -12,6 +12,8 @@ from typing import Optional
 
 from langchain_core.documents import Document
 
+GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
 TOPIC_MAP = {
     "python": "python",
     "statistics": "statistics",
@@ -72,6 +74,25 @@ LEGAL_FIELD_ORDER = (
     "quote_attribution",
     "tags",
 )
+
+
+def is_git_lfs_pointer(filepath: str | os.PathLike[str]) -> bool:
+    """Return True when a file is a Git LFS pointer instead of real content."""
+    try:
+        with open(filepath, "rb") as f:
+            return f.read(len(GIT_LFS_POINTER_PREFIX)).startswith(GIT_LFS_POINTER_PREFIX)
+    except OSError:
+        return False
+
+
+def _skip_if_lfs_pointer(filepath: str) -> bool:
+    if not is_git_lfs_pointer(filepath):
+        return False
+    print(
+        "[ERROR] Skipping Git LFS pointer file "
+        f"{filepath}. Run `git lfs pull` or `python scripts/download_data.py --force`."
+    )
+    return True
 
 
 def _infer_topic(filepath: str) -> str:
@@ -204,6 +225,9 @@ def _format_legal_record(jurisdiction: str, category: str, article_id: str, arti
 
 def load_markdown(filepath: str) -> list[Document]:
     """Load a Markdown file, splitting by ## headers into sections."""
+    if _skip_if_lfs_pointer(filepath):
+        return []
+
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
@@ -241,6 +265,9 @@ def load_markdown(filepath: str) -> list[Document]:
 
 def load_docx(filepath: str) -> list[Document]:
     """Load a Word document, extracting each non-empty paragraph."""
+    if _skip_if_lfs_pointer(filepath):
+        return []
+
     try:
         from docx import Document as DocxDocument
 
@@ -304,6 +331,9 @@ def clean_pdf_text(text: str) -> str:
 
 def load_pdf(filepath: str) -> list[Document]:
     """Load a PDF file page by page using pdfplumber."""
+    if _skip_if_lfs_pointer(filepath):
+        return []
+
     try:
         import pdfplumber
 
@@ -342,6 +372,9 @@ def load_pdf(filepath: str) -> list[Document]:
 
 def load_ipynb(filepath: str) -> list[Document]:
     """Load a Jupyter Notebook, extracting markdown and code cells."""
+    if _skip_if_lfs_pointer(filepath):
+        return []
+
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             notebook = json.load(f)
@@ -384,6 +417,9 @@ def load_ipynb(filepath: str) -> list[Document]:
 
 def load_legal_py(filepath: str) -> list[Document]:
     """Load structured legal data from a Python module."""
+    if _skip_if_lfs_pointer(filepath):
+        return []
+
     try:
         spec = importlib.util.spec_from_file_location("legal_data", filepath)
         if spec is None or spec.loader is None:

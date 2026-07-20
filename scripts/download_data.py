@@ -17,6 +17,7 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data" / "raw"
+GIT_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 
 WEB_RESOURCES = {
     "python": [
@@ -48,10 +49,10 @@ WEB_RESOURCES = {
             "format": "html",
         },
         {
-            "url": "https://www.openintro.org/go?id=os4_for_screen_readers&referrer=/book/os/index.php",
-            "filename": "openintro_statistics.pdf",
+            "url": "https://greenteapress.com/thinkstats2/thinkstats2.pdf",
+            "filename": "thinkstats2.pdf",
             "format": "binary",
-            "fallback_url": "https://github.com/OpenIntroStat/openintro-statistics/raw/master/OS4_for_screen_readers.pdf",
+            "min_size_bytes": 100_000,
         },
         {
             "url": "https://www.statsmodels.org/stable/regression.html",
@@ -81,6 +82,31 @@ HEADERS = {
 }
 
 
+def is_git_lfs_pointer(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return f.read(len(GIT_LFS_POINTER_PREFIX)).startswith(GIT_LFS_POINTER_PREFIX)
+    except OSError:
+        return False
+
+
+def is_valid_download(path: Path, resource: dict) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    if is_git_lfs_pointer(path):
+        return False
+
+    if resource["format"] == "binary":
+        min_size = resource.get("min_size_bytes", 1024)
+        if path.stat().st_size < min_size:
+            return False
+        if path.suffix.lower() == ".pdf":
+            with path.open("rb") as f:
+                return f.read(4) == b"%PDF"
+
+    return True
+
+
 def download_html_as_md(url: str, save_path: Path) -> bool:
     """Download an HTML page and convert to Markdown."""
     try:
@@ -98,28 +124,41 @@ def download_html_as_md(url: str, save_path: Path) -> bool:
         return False
 
 
-def download_binary(url: str, save_path: Path, fallback_url: str = None) -> bool:
+def _stream_binary(url: str, save_path: Path) -> None:
+    resp = requests.get(url, headers=HEADERS, timeout=120, stream=True)
+    resp.raise_for_status()
+    with open(save_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+
+def download_binary(
+    url: str,
+    save_path: Path,
+    fallback_url: str = None,
+    resource: dict | None = None,
+) -> bool:
     """Download a binary file (PDF, etc.)."""
+    temp_path = save_path.with_name(f".{save_path.name}.download")
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=120, stream=True)
-        resp.raise_for_status()
-        with open(save_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+        _stream_binary(url, temp_path)
+        if resource and not is_valid_download(temp_path, resource):
+            raise ValueError("downloaded file failed validation")
+        temp_path.replace(save_path)
         return True
     except Exception as e:
         print(f"  [WARN] Primary URL failed ({e})")
         if fallback_url:
             print(f"  Trying fallback URL: {fallback_url}")
             try:
-                resp = requests.get(fallback_url, headers=HEADERS, timeout=120, stream=True)
-                resp.raise_for_status()
-                with open(save_path, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                _stream_binary(fallback_url, temp_path)
+                if resource and not is_valid_download(temp_path, resource):
+                    raise ValueError("fallback file failed validation")
+                temp_path.replace(save_path)
                 return True
             except Exception as e2:
                 print(f"  [ERROR] Fallback also failed: {e2}")
+        temp_path.unlink(missing_ok=True)
         return False
 
 
@@ -140,6 +179,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print the collection plan without downloading anything.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download files even when existing local files look valid.",
     )
     return parser.parse_args(argv)
 
@@ -179,10 +223,13 @@ def main(argv: list[str] | None = None) -> int:
             save_path = DATA_DIR / topic / res["filename"]
             print(f"  Downloading: {res['filename']}...")
 
-            if res["format"] == "html":
+            if not args.force and is_valid_download(save_path, res):
+                ok = True
+                print(f"  ✓ Already valid: {save_path.relative_to(BASE_DIR)}")
+            elif res["format"] == "html":
                 ok = download_html_as_md(res["url"], save_path)
             else:
-                ok = download_binary(res["url"], save_path, res.get("fallback_url"))
+                ok = download_binary(res["url"], save_path, res.get("fallback_url"), res)
 
             if ok:
                 success.append(save_path)
@@ -210,6 +257,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nDone!")
     return 1 if failed else 0
+
+
+def ensure_reference_data(force: bool = False) -> bool:
+    """Ensure public reference materials are present and not LFS pointers."""
+    args = ["--force"] if force else []
+    return main(args) == 0
 
 
 if __name__ == "__main__":

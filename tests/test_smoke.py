@@ -59,10 +59,17 @@ def _run_python(
     cwd: Path | str | None = None,
     timeout: int = 60,
 ) -> subprocess.CompletedProcess[str]:
+    child_env = (env or os.environ.copy()).copy()
+    existing_pythonpath = child_env.get("PYTHONPATH")
+    child_env["PYTHONPATH"] = (
+        str(REPO_ROOT)
+        if not existing_pythonpath
+        else f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}"
+    )
     return subprocess.run(
         [PYTHON, *args],
         cwd=cwd or REPO_ROOT,
-        env=env,
+        env=child_env,
         capture_output=True,
         text=True,
         check=False,
@@ -121,6 +128,52 @@ class SmokeTests(unittest.TestCase):
         dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
         for target in DOCKER_COMPILE_TARGETS:
             self.assertIn(target, dockerfile, f"Dockerfile compile coverage is missing {target}")
+
+    def test_dockerignore_blocks_local_secrets_and_work_files(self):
+        dockerignore = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        required_entries = {".env", ".venv", ".git", "server.log", "HANDOFF.md", "CURSOR_*.md"}
+        self.assertTrue(required_entries.issubset(set(dockerignore)))
+
+    def test_default_cost_guardrails_are_conservative(self):
+        result = _run_inline(
+            """
+            import json
+            import config
+
+            payload = {
+                "chat_min": config.RATE_LIMIT_CHAT_PER_MIN,
+                "quiz_min": config.RATE_LIMIT_QUIZ_PER_MIN,
+                "chat_hour": config.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+                "quiz_hour": config.GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR,
+                "chat_day": config.GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
+                "quiz_day": config.GLOBAL_RATE_LIMIT_QUIZ_PER_DAY,
+                "ip_chat_day": config.IP_RATE_LIMIT_CHAT_PER_DAY,
+                "ip_quiz_day": config.IP_RATE_LIMIT_QUIZ_PER_DAY,
+                "agent_iterations": config.MAX_AGENT_ITERATIONS,
+                "llm_tokens": config.LLM_MAX_OUTPUT_TOKENS,
+                "quiz_tokens": config.QUIZ_MAX_OUTPUT_TOKENS,
+            }
+            print("PAYLOAD::" + json.dumps(payload))
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(
+            _extract_payload(result.stdout),
+            {
+                "chat_min": 3,
+                "quiz_min": 1,
+                "chat_hour": 20,
+                "quiz_hour": 6,
+                "chat_day": 25,
+                "quiz_day": 8,
+                "ip_chat_day": 20,
+                "ip_quiz_day": 6,
+                "agent_iterations": 4,
+                "llm_tokens": 900,
+                "quiz_tokens": 1200,
+            },
+        )
 
     def test_download_data_dry_run(self):
         result = _run_python(["scripts/download_data.py", "--dry-run"])
@@ -261,6 +314,30 @@ class StartupAlignmentTests(unittest.TestCase):
         self.assertEqual(output_lines[0], str(store_dir))
         self.assertEqual(output_lines[1:], ["False", "True"])
 
+    def test_server_persisted_store_rejects_lfs_pointer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store_dir = Path(temp_dir) / "store"
+            store_dir.mkdir()
+            (store_dir / "chroma.sqlite3").write_text(
+                "version https://git-lfs.github.com/spec/v1\n"
+                "oid sha256:abc123\n"
+                "size 123456\n",
+                encoding="utf-8",
+            )
+            result = _run_python(
+                [
+                    "-c",
+                    (
+                        "from pathlib import Path; "
+                        "from server import _persisted_store_exists; "
+                        f"print(_persisted_store_exists('A', Path({str(store_dir)!r})))"
+                    ),
+                ],
+                env=_smoke_env(),
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "False")
+
     def test_server_default_persisted_store_exists_uses_smoke_canonical_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -311,6 +388,80 @@ class StartupAlignmentTests(unittest.TestCase):
 
 
 class RoutingTests(unittest.TestCase):
+    def test_chat_history_schema_rejects_malformed_items(self):
+        result = _run_inline(
+            """
+            from pydantic import ValidationError
+            from server import ChatRequest
+
+            try:
+                ChatRequest(message="hello", history=["bad-history-item"])
+            except ValidationError:
+                print("rejected")
+            else:
+                print("accepted")
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "rejected")
+
+    def test_client_ip_ignores_spoofable_headers_by_default(self):
+        result = _run_inline(
+            """
+            import os
+            from types import SimpleNamespace
+            from server import _get_client_ip
+
+            os.environ.pop("AMICUS_TRUST_PROXY_HEADERS", None)
+            request = SimpleNamespace(
+                headers={"x-real-ip": "203.0.113.99", "x-forwarded-for": "198.51.100.10"},
+                client=SimpleNamespace(host="127.0.0.1"),
+            )
+            print(_get_client_ip(request))
+
+            os.environ["AMICUS_TRUST_PROXY_HEADERS"] = "1"
+            print(_get_client_ip(request))
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["127.0.0.1", "198.51.100.10"])
+
+    def test_chat_daily_limit_blocks_after_configured_limit(self):
+        result = _run_inline(
+            """
+            from fastapi.testclient import TestClient
+            import server
+
+            original = {
+                "RATE_LIMIT_CHAT_PER_MIN": server.RATE_LIMIT_CHAT_PER_MIN,
+                "IP_RATE_LIMIT_CHAT_PER_DAY": server.IP_RATE_LIMIT_CHAT_PER_DAY,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_HOUR": server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_DAY": server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
+            }
+            try:
+                server._rate_buckets.clear()
+                server.RATE_LIMIT_CHAT_PER_MIN = 10
+                server.IP_RATE_LIMIT_CHAT_PER_DAY = 2
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY = 10
+                client = TestClient(server.app)
+                statuses = [
+                    client.post("/api/chat", json={"message": "who are you?", "history": []}).status_code
+                    for _ in range(3)
+                ]
+                print("PAYLOAD::" + __import__("json").dumps(statuses))
+            finally:
+                server._rate_buckets.clear()
+                for name, value in original.items():
+                    setattr(server, name, value)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(_extract_payload(result.stdout), [200, 200, 429])
+
     def test_follow_up_context_restores_topic_and_current_request(self):
         result = _run_python(
             [
@@ -333,6 +484,62 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(output_lines[0], "True")
         self.assertIn("Earlier topic: Should I use a loop or a list comprehension?", output_lines[1])
         self.assertIn("Current follow-up request: the second one", output_lines[1])
+
+
+class SafetyTests(unittest.TestCase):
+    def test_download_validator_rejects_lfs_pointer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pointer_path = Path(temp_dir) / "bad.pdf"
+            pointer_path.write_text(
+                "version https://git-lfs.github.com/spec/v1\n"
+                "oid sha256:abc123\n"
+                "size 123456\n",
+                encoding="utf-8",
+            )
+            result = _run_inline(
+                """
+                from pathlib import Path
+                from scripts.download_data import is_valid_download
+
+                path = Path(__import__("os").environ["POINTER_PATH"])
+                resource = {"format": "binary", "min_size_bytes": 1}
+                print(is_valid_download(path, resource))
+                """,
+                env={**_smoke_env(), "POINTER_PATH": str(pointer_path)},
+            )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "False")
+
+    def test_quiz_generation_does_not_return_backend_errors(self):
+        result = _run_inline(
+            """
+            from langchain_core.documents import Document
+            from quiz_generator import QuizGenerationError, generate_quiz
+
+            class FakeVectorStore:
+                def similarity_search_with_relevance_scores(self, query, **kwargs):
+                    doc = Document(
+                        page_content="A Python loop repeats a block of code.",
+                        metadata={"source": "python_tutorial_intro.md", "topic": "python"},
+                    )
+                    return [(doc, 1.0)]
+
+            class FailingLLM:
+                def invoke(self, prompt):
+                    raise RuntimeError("SECRET_BACKEND_DETAIL quota exhausted")
+
+            try:
+                generate_quiz("python loops", FakeVectorStore(), llm=FailingLLM())
+            except QuizGenerationError as exc:
+                print(str(exc))
+                print("SECRET_BACKEND_DETAIL" in str(exc))
+            else:
+                print("no-error")
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.splitlines(), ["Quiz generation failed.", "False"])
 
 
 class PromptTruthfulnessTests(unittest.TestCase):

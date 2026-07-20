@@ -9,6 +9,17 @@ if not GOOGLE_API_KEY:
     raise ValueError("未找到 GOOGLE_API_KEY。服务拒绝启动，请先配置环境变量。")
 
 
+def _int_env(name: str, default: int, minimum: int = 0) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
 def _normalize_content(content):
     """Gemini 3+ returns content as list of parts; collapse to plain string."""
     if isinstance(content, list):
@@ -46,14 +57,21 @@ TOPICS = ["python", "statistics", "nlp", "legal"]
 CHINESE_SEPARATORS = ["\n\n", "\n", "。", ".", "，", "；", "！", "？", ";", " "]
 ENGLISH_SEPARATORS = ["\n\n", "\n", ".", ";", " "]
 
-MAX_AGENT_ITERATIONS = 5
-AGENT_MAX_EXECUTION_TIME = 30  # seconds — faster model needs less time
+MAX_AGENT_ITERATIONS = _int_env("AMICUS_MAX_AGENT_ITERATIONS", 4, 1)
+AGENT_MAX_EXECUTION_TIME = _int_env("AMICUS_AGENT_MAX_EXECUTION_TIME_SECONDS", 30, 5)
+LLM_REQUEST_TIMEOUT = _int_env("AMICUS_LLM_REQUEST_TIMEOUT_SECONDS", 35, 5)
+LLM_MAX_OUTPUT_TOKENS = _int_env("AMICUS_LLM_MAX_OUTPUT_TOKENS", 900, 128)
+QUIZ_MAX_OUTPUT_TOKENS = _int_env("AMICUS_QUIZ_MAX_OUTPUT_TOKENS", 1200, 256)
 
-RATE_LIMIT_CHAT_PER_MIN = 6
-RATE_LIMIT_QUIZ_PER_MIN = 3
-RATE_LIMIT_HEALTH_PER_MIN = 30
-GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = 200
-GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR = 60
+RATE_LIMIT_CHAT_PER_MIN = _int_env("AMICUS_RATE_LIMIT_CHAT_PER_MIN", 3, 1)
+RATE_LIMIT_QUIZ_PER_MIN = _int_env("AMICUS_RATE_LIMIT_QUIZ_PER_MIN", 1, 1)
+RATE_LIMIT_HEALTH_PER_MIN = _int_env("AMICUS_RATE_LIMIT_HEALTH_PER_MIN", 30, 1)
+IP_RATE_LIMIT_CHAT_PER_DAY = _int_env("AMICUS_IP_RATE_LIMIT_CHAT_PER_DAY", 20, 1)
+IP_RATE_LIMIT_QUIZ_PER_DAY = _int_env("AMICUS_IP_RATE_LIMIT_QUIZ_PER_DAY", 6, 1)
+GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = _int_env("AMICUS_GLOBAL_RATE_LIMIT_CHAT_PER_HOUR", 20, 1)
+GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR = _int_env("AMICUS_GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR", 6, 1)
+GLOBAL_RATE_LIMIT_CHAT_PER_DAY = _int_env("AMICUS_GLOBAL_RATE_LIMIT_CHAT_PER_DAY", 25, 1)
+GLOBAL_RATE_LIMIT_QUIZ_PER_DAY = _int_env("AMICUS_GLOBAL_RATE_LIMIT_QUIZ_PER_DAY", 8, 1)
 
 HYBRID_RETRIEVER_WEIGHTS = [0.5, 0.5]
 DEFAULT_RETRIEVAL_K = 4

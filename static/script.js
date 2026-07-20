@@ -132,7 +132,7 @@ function setDynamicGreeting() {
     else if (hkHour >= 12 && hkHour < 18) timeGreeting = 'Good afternoon';
     else timeGreeting = 'Good evening';
 
-    const iconHtml = '<img src="/static/amicus-avatar.jpeg" alt="Amicus Avatar" style="height:36px; width:auto; vertical-align:middle; margin-right:12px; margin-bottom:6px;">';
+    const iconHtml = '<img src="/static/amicus-icon.svg" alt="Amicus Avatar" style="height:36px; width:auto; vertical-align:middle; margin-right:12px; margin-bottom:6px;">';
 
     line1.innerHTML = iconHtml + timeGreeting;
     line2.textContent = 'Begin your computational law journey';

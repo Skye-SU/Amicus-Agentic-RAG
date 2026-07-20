@@ -4,6 +4,7 @@ Serves the static frontend and exposes /api/chat, /api/quiz, /api/health.
 """
 
 import logging
+import os
 import re
 import time
 import threading
@@ -11,12 +12,13 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import build_agent
 from config import (
@@ -24,9 +26,15 @@ from config import (
     DIRECT_RAG_DOC_LIMIT,
     FOLLOW_UP_MAX_WORDS,
     GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+    GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
     GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR,
+    GLOBAL_RATE_LIMIT_QUIZ_PER_DAY,
     GOOGLE_API_KEY,
+    IP_RATE_LIMIT_CHAT_PER_DAY,
+    IP_RATE_LIMIT_QUIZ_PER_DAY,
+    LLM_MAX_OUTPUT_TOKENS,
     LLM_MODEL,
+    LLM_REQUEST_TIMEOUT,
     MAX_CHAT_HISTORY_MESSAGES,
     NOT_COVERED_RESPONSE,
     RATE_LIMIT_CHAT_PER_MIN,
@@ -41,7 +49,7 @@ from config import (
 )
 
 logger = logging.getLogger("amicus")
-from data_loader import load_all_documents
+from data_loader import is_git_lfs_pointer, load_all_documents
 from hybrid_retriever import (
     build_hybrid_retriever,
     extract_article_reference,
@@ -49,7 +57,13 @@ from hybrid_retriever import (
     search_legal_authority,
 )
 from quiz_generator import generate_quiz
-from rag_pipeline import build_vector_store, chunk_documents, load_vector_store, resolve_persist_dir
+from rag_pipeline import (
+    build_vector_store,
+    chunk_documents,
+    load_vector_store,
+    resolve_persist_dir,
+    smoke_test_enabled,
+)
 
 _backend = {}
 
@@ -102,14 +116,30 @@ def _check_global_rate_limit(endpoint: str, max_requests: int) -> bool:
     return _check_rate_limit("__global__", endpoint, max_requests, window_sec=3600)
 
 
+def _check_daily_rate_limit(client_ip: str, endpoint: str, max_requests: int) -> bool:
+    return _check_rate_limit(client_ip, f"{endpoint}:day", max_requests, window_sec=86400)
+
+
+def _check_global_daily_rate_limit(endpoint: str, max_requests: int) -> bool:
+    return _check_rate_limit("__global__", f"{endpoint}:day", max_requests, window_sec=86400)
+
+
+def _trust_proxy_headers() -> bool:
+    return os.getenv("AMICUS_TRUST_PROXY_HEADERS", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _get_client_ip(request: Request) -> str:
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
+    direct_ip = request.client.host if request.client else "unknown"
+    if not _trust_proxy_headers():
+        return direct_ip
+
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
+        return forwarded.split(",")[0].strip() or direct_ip
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip() or direct_ip
+    return direct_ip
 
 
 def _sanitize_user_input(text: str) -> str:
@@ -129,6 +159,18 @@ GLOBAL_RATE_LIMIT_RESPONSE = JSONResponse(
     status_code=429,
     content={
         "answer": "🪶 Amicus is receiving a lot of requests right now. Please try again in a few minutes.",
+        "grounding_mode": "none",
+        "sources": [],
+    },
+)
+
+DAILY_LIMIT_RESPONSE = JSONResponse(
+    status_code=429,
+    content={
+        "answer": (
+            "🪶 Amicus has reached today's live demo limit. "
+            "Please try again tomorrow, or review the project materials and examples meanwhile."
+        ),
         "grounding_mode": "none",
         "sources": [],
     },
@@ -464,9 +506,48 @@ def _canonical_persist_dir(strategy: str = "A", persist_dir: str | None = None) 
     return resolve_persist_dir(strategy, persist_dir)
 
 
+def _find_lfs_pointer_files(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    return sorted(path for path in root.rglob("*") if path.is_file() and is_git_lfs_pointer(path))
+
+
 def _persisted_store_exists(strategy: str = "A", persist_dir: str | None = None) -> bool:
     resolved_dir = Path(_canonical_persist_dir(strategy, persist_dir))
-    return (resolved_dir / "chroma.sqlite3").exists()
+    sqlite_path = resolved_dir / "chroma.sqlite3"
+    if not sqlite_path.exists() or is_git_lfs_pointer(sqlite_path):
+        return False
+    return not _find_lfs_pointer_files(resolved_dir)
+
+
+def _ensure_reference_data_ready() -> None:
+    if smoke_test_enabled():
+        return
+
+    data_dir = Path("data/raw")
+    pointer_files = _find_lfs_pointer_files(data_dir)
+    if not pointer_files:
+        return
+
+    logger.warning(
+        "Reference data contains Git LFS pointer files; attempting public data download."
+    )
+    try:
+        from scripts.download_data import ensure_reference_data
+
+        ensure_reference_data()
+    except Exception as exc:
+        logger.warning("Automatic reference data download failed: %s", exc)
+
+    remaining = _find_lfs_pointer_files(data_dir)
+    if remaining:
+        preview = ", ".join(str(path) for path in remaining[:3])
+        if len(remaining) > 3:
+            preview += f", ... ({len(remaining)} files total)"
+        raise RuntimeError(
+            "Reference data still contains Git LFS pointer files after bootstrap: "
+            f"{preview}. Run `git lfs pull` or `python scripts/download_data.py --force`."
+        )
 
 
 def _init_backend():
@@ -484,6 +565,7 @@ def _init_backend():
         except Exception as e:
             logger.warning("Failed to load existing store, rebuilding: %s", e)
 
+    _ensure_reference_data_ready()
     docs = load_all_documents()
     if not docs:
         raise RuntimeError("No documents found. Run scripts/download_data.py first.")
@@ -513,14 +595,19 @@ app.add_middleware(
 )
 
 
+class ChatHistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(default="", max_length=_INPUT_MAX_HISTORY_CONTENT_LEN)
+
+
 class ChatRequest(BaseModel):
-    message: str
-    history: list = []  # List of {"role": "user"|"assistant", "content": "..."}
+    message: str = Field(default="", max_length=_INPUT_MAX_MESSAGE_LEN)
+    history: list[ChatHistoryMessage] = Field(default_factory=list)
 
 
 class QuizRequest(BaseModel):
-    topic: str
-    num_questions: int = 3
+    topic: str = Field(default="", max_length=_INPUT_MAX_TOPIC_LEN)
+    num_questions: int = Field(default=3, ge=1, le=_INPUT_MAX_QUIZ_QUESTIONS)
 
 
 def _clean_text(text: str) -> str:
@@ -535,8 +622,33 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9_]+", (text or "").lower())
 
 
+def _normalize_history(history: list[ChatHistoryMessage] | None) -> list[dict[str, str]]:
+    normalized = []
+    for msg in (history or [])[:_INPUT_MAX_HISTORY_ITEMS]:
+        if isinstance(msg, ChatHistoryMessage):
+            role = msg.role
+            content = msg.content
+        elif isinstance(msg, dict):
+            role = msg.get("role")
+            content = msg.get("content")
+        else:
+            continue
+
+        if role not in {"user", "assistant"}:
+            continue
+        normalized.append(
+            {
+                "role": role,
+                "content": (content or "")[:_INPUT_MAX_HISTORY_CONTENT_LEN],
+            }
+        )
+    return normalized
+
+
 def _last_message(history: list, role: str, preserve_lines: bool = False) -> str:
     for msg in reversed(history or []):
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == role and msg.get("content"):
             content = msg["content"]
             return content if preserve_lines else _clean_text(content)
@@ -1270,6 +1382,8 @@ def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[st
         model=LLM_MODEL,
         temperature=0.1,
         google_api_key=GOOGLE_API_KEY,
+        max_tokens=LLM_MAX_OUTPUT_TOKENS,
+        request_timeout=LLM_REQUEST_TIMEOUT,
     )
     fallback_prompt = f"""{SYSTEM_PROMPT}
 
@@ -1331,15 +1445,18 @@ def chat_endpoint(req: ChatRequest, request: Request):
     if not _check_rate_limit(client_ip, "chat", RATE_LIMIT_CHAT_PER_MIN):
         logger.warning("Rate limit hit: %s on /api/chat", client_ip)
         return RATE_LIMIT_RESPONSE
+    if not _check_daily_rate_limit(client_ip, "chat", IP_RATE_LIMIT_CHAT_PER_DAY):
+        logger.warning("Daily IP limit hit: %s on /api/chat", client_ip)
+        return DAILY_LIMIT_RESPONSE
     if not _check_global_rate_limit("chat", GLOBAL_RATE_LIMIT_CHAT_PER_HOUR):
         logger.warning("Global rate limit hit on /api/chat (triggered by %s)", client_ip)
         return GLOBAL_RATE_LIMIT_RESPONSE
+    if not _check_global_daily_rate_limit("chat", GLOBAL_RATE_LIMIT_CHAT_PER_DAY):
+        logger.warning("Global daily limit hit on /api/chat (triggered by %s)", client_ip)
+        return DAILY_LIMIT_RESPONSE
 
     raw_message = (req.message or "")[:_INPUT_MAX_MESSAGE_LEN]
-    history = (req.history or [])[:_INPUT_MAX_HISTORY_ITEMS]
-    for msg in history:
-        if isinstance(msg, dict) and "content" in msg:
-            msg["content"] = (msg["content"] or "")[:_INPUT_MAX_HISTORY_CONTENT_LEN]
+    history = _normalize_history(req.history)
     message = _sanitize_user_input(_clean_text(raw_message))
     logger.info("Chat request: ip=%s msg=%.80s", client_ip, message)
 
@@ -1473,11 +1590,23 @@ def quiz_endpoint(req: QuizRequest, request: Request):
             status_code=429,
             content={"quiz": "🪶 You're generating quizzes a bit too quickly. Please wait a moment and try again."},
         )
+    if not _check_daily_rate_limit(client_ip, "quiz", IP_RATE_LIMIT_QUIZ_PER_DAY):
+        logger.warning("Daily IP limit hit: %s on /api/quiz", client_ip)
+        return JSONResponse(
+            status_code=429,
+            content={"quiz": "🪶 Amicus has reached today's quiz limit for this visitor. Please try again tomorrow."},
+        )
     if not _check_global_rate_limit("quiz", GLOBAL_RATE_LIMIT_QUIZ_PER_HOUR):
         logger.warning("Global rate limit hit on /api/quiz (triggered by %s)", client_ip)
         return JSONResponse(
             status_code=429,
             content={"quiz": "🪶 Amicus is receiving a lot of requests right now. Please try again in a few minutes."},
+        )
+    if not _check_global_daily_rate_limit("quiz", GLOBAL_RATE_LIMIT_QUIZ_PER_DAY):
+        logger.warning("Global daily limit hit on /api/quiz (triggered by %s)", client_ip)
+        return JSONResponse(
+            status_code=429,
+            content={"quiz": "🪶 Amicus has reached today's live demo quiz limit. Please try again tomorrow."},
         )
 
     topic = _sanitize_user_input(_clean_text((req.topic or "")[:_INPUT_MAX_TOPIC_LEN]))

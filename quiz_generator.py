@@ -4,8 +4,19 @@ Quiz generation feature: generates multiple-choice questions from the reference 
 
 from langchain_core.documents import Document
 from langchain_classic.prompts import PromptTemplate
-from config import GOOGLE_API_KEY, LLM_MODEL, LLM_TEMPERATURE, ChatGoogleGenerativeAI
+from config import (
+    GOOGLE_API_KEY,
+    LLM_MODEL,
+    LLM_REQUEST_TIMEOUT,
+    LLM_TEMPERATURE,
+    QUIZ_MAX_OUTPUT_TOKENS,
+    ChatGoogleGenerativeAI,
+)
 from hybrid_retriever import search_by_topic
+
+
+class QuizGenerationError(RuntimeError):
+    """Raised when quiz generation fails without exposing backend details."""
 
 
 QUIZ_PROMPT = PromptTemplate(
@@ -73,6 +84,8 @@ def generate_quiz(
             model=LLM_MODEL,
             temperature=LLM_TEMPERATURE + 0.2,  # slightly more creative for quiz gen
             google_api_key=GOOGLE_API_KEY,
+            max_tokens=QUIZ_MAX_OUTPUT_TOKENS,
+            request_timeout=LLM_REQUEST_TIMEOUT,
         )
 
     topic_keywords = {
@@ -116,7 +129,7 @@ def generate_quiz(
         response = llm.invoke(prompt_text)
         return response.content
     except Exception as e:
-        return f"[ERROR] Quiz generation failed: {e}"
+        raise QuizGenerationError("Quiz generation failed.") from e
 
 
 if __name__ == "__main__":
