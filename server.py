@@ -925,6 +925,13 @@ def _is_supported_course_query(query_text: str) -> bool:
     return any(topic in SUPPORTED_COURSE_TOPICS for topic in matched)
 
 
+def _should_use_direct_course_path(query_context: dict) -> bool:
+    if query_context.get("is_follow_up"):
+        return False
+    lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
+    return _is_supported_course_query(lookup_query)
+
+
 def _apply_first_turn_scaffold(answer: str, *, first_turn: bool) -> str:
     cleaned = (answer or "").strip()
     if not cleaned or not first_turn:
@@ -1484,6 +1491,22 @@ def chat_endpoint(req: ChatRequest, request: Request):
             sources=_sources_from_docs(exact_docs),
         )
 
+    fallback_docs = None
+    if _should_use_direct_course_path(query_context):
+        fallback_docs = _retrieve_docs(lookup_query)
+        if _docs_support_query(lookup_query, fallback_docs):
+            try:
+                answer, sources = _direct_rag_answer(lookup_query, history, fallback_docs)
+                answer = _finalize_answer_text(answer, query_context)
+                if answer and not _answer_is_degraded(answer):
+                    return _chat_response(
+                        answer,
+                        grounding_mode=GROUNDING_MODE_DIRECT_RAG,
+                        sources=sources,
+                    )
+            except Exception as direct_err:
+                logger.warning("Direct course answer failed, falling back to agent: %s", direct_err)
+
     # Build agent input with conversation context
     if query_context.get("is_follow_up"):
         agent_input = query_context["agent_input"]
@@ -1520,7 +1543,6 @@ def chat_endpoint(req: ChatRequest, request: Request):
 
     is_degraded = agent_failed or not agent_answer or _answer_is_degraded(agent_answer)
 
-    fallback_docs = None
     if not is_degraded and NOT_COVERED_RESPONSE.lower() in agent_answer.lower():
         fallback_docs = _retrieve_docs(lookup_query)
         if _docs_support_query(lookup_query, fallback_docs):

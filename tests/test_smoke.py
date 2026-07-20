@@ -485,6 +485,32 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Earlier topic: Should I use a loop or a list comprehension?", output_lines[1])
         self.assertIn("Current follow-up request: the second one", output_lines[1])
 
+    def test_simple_course_question_uses_direct_path_before_agent(self):
+        result = _run_inline(
+            """
+            from server import _build_query_context, _should_use_direct_course_path
+
+            first_turn = _build_query_context("Explain a Python variable", [])
+            follow_up = _build_query_context(
+                "explain that again",
+                [{"role": "user", "content": "What is a Python variable?"}],
+            )
+            unsupported = _build_query_context("What is the capital of France?", [])
+
+            print("PAYLOAD::" + __import__("json").dumps({
+                "first_turn": _should_use_direct_course_path(first_turn),
+                "follow_up": _should_use_direct_course_path(follow_up),
+                "unsupported": _should_use_direct_course_path(unsupported),
+            }))
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(
+            _extract_payload(result.stdout),
+            {"first_turn": True, "follow_up": False, "unsupported": False},
+        )
+
 
 class SafetyTests(unittest.TestCase):
     def test_download_validator_rejects_lfs_pointer(self):
