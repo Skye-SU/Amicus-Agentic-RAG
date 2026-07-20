@@ -300,7 +300,7 @@ async function sendMessage(textOverride) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message,
-                history: conversationHistory.slice(0, -1),
+                history: buildRequestHistory(),
             }),
         });
         const data = await res.json();
@@ -311,6 +311,9 @@ async function sendMessage(textOverride) {
         clearThinking(thinkingEl);
 
         let answer = data.answer || '';
+        if (!res.ok || !answer.trim()) {
+            throw new Error('empty_chat_response');
+        }
         if (answer.includes('Agent stopped due to') || answer.includes('iteration limit') || answer.includes('time limit')) {
             answer = "🪶 I took a bit too long searching — let me give you a shorter answer. Could you try rephrasing your question more specifically? For example, instead of a broad topic, ask about one particular concept.";
         }
@@ -331,6 +334,16 @@ async function sendMessage(textOverride) {
             isLoading = false;
         }
     }
+}
+
+function buildRequestHistory() {
+    return conversationHistory
+        .slice(0, -1)
+        .slice(-20)
+        .map(msg => ({
+            role: msg.role,
+            content: String(msg.content || '').slice(0, 1000),
+        }));
 }
 
 // ─── Messages ───

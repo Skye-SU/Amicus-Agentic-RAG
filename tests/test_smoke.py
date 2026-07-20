@@ -404,6 +404,23 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertEqual(result.stdout.strip(), "rejected")
 
+    def test_long_chat_history_is_accepted_then_truncated(self):
+        result = _run_inline(
+            """
+            from server import ChatRequest, _normalize_history
+
+            req = ChatRequest(
+                message="what is python?",
+                history=[{"role": "assistant", "content": "x" * 1201}],
+            )
+            normalized = _normalize_history(req.history)
+            print(len(normalized[0]["content"]))
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "1000")
+
     def test_client_ip_ignores_spoofable_headers_by_default(self):
         result = _run_inline(
             """

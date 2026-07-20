@@ -615,11 +615,11 @@ app.add_middleware(
 
 class ChatHistoryMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(default="", max_length=_INPUT_MAX_HISTORY_CONTENT_LEN)
+    content: str = ""
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(default="", max_length=_INPUT_MAX_MESSAGE_LEN)
+    message: str = ""
     history: list[ChatHistoryMessage] = Field(default_factory=list)
 
 
