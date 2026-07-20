@@ -374,6 +374,24 @@ TOPIC_HINTS = {
     ),
 }
 SUPPORTED_COURSE_TOPICS = ("python", "statistics", "nlp", "legal_knowledge")
+AGENTIC_SYNTHESIS_HINTS_EN = (
+    "analogy",
+    "metaphor",
+    "compare",
+    "comparison",
+    "explain like",
+    "teach me",
+    "walk me through",
+)
+AGENTIC_SYNTHESIS_HINTS_ZH = (
+    "类比",
+    "比喻",
+    "打比方",
+    "用法律",
+    "用律师",
+    "像律师",
+)
+GENERIC_LEGAL_STYLE_TERMS = ("legal", "law", "court")
 FIRST_TURN_GREETING = "🪶 Hello and welcome! I'm Amicus."
 FIRST_TURN_CLOSING = (
     "Feel free to ask me about anything you're learning — whether it's Python, statistics, NLP, or legal analysis."
@@ -946,10 +964,22 @@ def _resolve_follow_up_task(
     return cleaned_message
 
 
+def _is_agentic_synthesis_request(query_text: str) -> bool:
+    raw_text = _clean_text(query_text)
+    lowered = raw_text.lower()
+    if any(hint in lowered for hint in AGENTIC_SYNTHESIS_HINTS_EN):
+        return True
+    return any(hint in raw_text for hint in AGENTIC_SYNTHESIS_HINTS_ZH)
+
+
 def _matched_topic_hints(text: str) -> set[str]:
     lowered = (text or "").lower()
     matched = set()
     for topic, keywords in TOPIC_HINTS.items():
+        if topic == "legal_knowledge" and _is_agentic_synthesis_request(text):
+            keywords = tuple(
+                keyword for keyword in keywords if keyword not in GENERIC_LEGAL_STYLE_TERMS
+            )
         if any(keyword in lowered for keyword in keywords):
             matched.add(topic)
     return matched
@@ -958,13 +988,6 @@ def _matched_topic_hints(text: str) -> set[str]:
 def _is_supported_course_query(query_text: str) -> bool:
     matched = _matched_topic_hints(query_text)
     return any(topic in SUPPORTED_COURSE_TOPICS for topic in matched)
-
-
-def _should_use_direct_course_path(query_context: dict) -> bool:
-    if query_context.get("is_follow_up"):
-        return False
-    lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
-    return _is_supported_course_query(lookup_query)
 
 
 def _apply_first_turn_scaffold(answer: str, *, first_turn: bool) -> str:
@@ -1131,6 +1154,8 @@ def _is_complex_follow_up_task(text: str) -> bool:
     if any(keyword in lowered for keyword in COMPLEX_FOLLOW_UP_KEYWORDS_EN):
         return True
     if any(keyword in raw_text for keyword in COMPLEX_FOLLOW_UP_KEYWORDS_ZH):
+        return True
+    if _is_agentic_synthesis_request(raw_text):
         return True
     if _has_multi_jurisdiction_signal(raw_text):
         return True
@@ -1422,7 +1447,11 @@ def _direct_rag_answer(lookup_query: str, history: list, docs: list) -> tuple[st
             "\nDo NOT restate this previous assistant answer unless needed:\n"
             f"{prior_answer[:450]}\n"
         )
-    wants_teaching_answer = not history and _is_supported_course_query(lookup_query) and not _should_use_concise_legal_style(lookup_query, docs)
+    wants_teaching_answer = (
+        not history
+        and (_is_supported_course_query(lookup_query) or _is_agentic_synthesis_request(lookup_query))
+        and not _should_use_concise_legal_style(lookup_query, docs)
+    )
     answer_style_instruction = (
         "Provide a clear, pedagogical teaching answer based ONLY on the above materials. "
         "Do NOT optimize for brevity. For concept questions, give a substantive explanation that feels like a patient instructor teaching a smart beginner. "
@@ -1546,28 +1575,6 @@ def chat_endpoint(req: ChatRequest, request: Request):
         )
 
     fallback_docs = None
-    if _should_use_direct_course_path(query_context):
-        fallback_docs = _retrieve_docs(lookup_query)
-        if fallback_docs:
-            try:
-                answer, sources = _direct_rag_answer(lookup_query, history, fallback_docs)
-                answer = _finalize_answer_text(answer, query_context)
-                if answer and not _answer_is_degraded(answer) and _answer_has_substantive_body(answer):
-                    return _chat_response(
-                        answer,
-                        grounding_mode=GROUNDING_MODE_DIRECT_RAG,
-                        sources=sources,
-                    )
-            except Exception as direct_err:
-                logger.warning("Direct course answer failed, using minimal fallback: %s", direct_err)
-
-            minimal = _build_course_concept_fallback_answer(query_context, fallback_docs)
-            if minimal:
-                return _chat_response(
-                    _finalize_answer_text(minimal, query_context),
-                    grounding_mode=GROUNDING_MODE_RELATED_ONLY,
-                    related_materials=_sources_from_docs(fallback_docs),
-                )
 
     # Build agent input with conversation context
     if query_context.get("is_follow_up"):

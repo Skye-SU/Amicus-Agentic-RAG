@@ -485,22 +485,25 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Earlier topic: Should I use a loop or a list comprehension?", output_lines[1])
         self.assertIn("Current follow-up request: the second one", output_lines[1])
 
-    def test_simple_course_question_uses_direct_path_before_agent(self):
+    def test_legal_analogy_is_style_not_legal_material_routing(self):
         result = _run_inline(
             """
-            from server import _build_query_context, _should_use_direct_course_path
-
-            first_turn = _build_query_context("Explain a Python variable", [])
-            follow_up = _build_query_context(
-                "explain that again",
-                [{"role": "user", "content": "What is a Python variable?"}],
+            from server import (
+                _is_agentic_synthesis_request,
+                _is_complex_follow_up_task,
+                _is_simple_authority_query,
+                _matched_topic_hints,
             )
-            unsupported = _build_query_context("What is the capital of France?", [])
+
+            query = "Explain what a p-value is using a legal analogy"
 
             print("PAYLOAD::" + __import__("json").dumps({
-                "first_turn": _should_use_direct_course_path(first_turn),
-                "follow_up": _should_use_direct_course_path(follow_up),
-                "unsupported": _should_use_direct_course_path(unsupported),
+                "topics": sorted(_matched_topic_hints(query)),
+                "synthesis_detected": _is_agentic_synthesis_request(query),
+                "complex_task": _is_complex_follow_up_task(query),
+                "article_analogy_simple_rule": _is_simple_authority_query(
+                    "Explain Article 1079 using a legal analogy"
+                ),
             }))
             """,
             env=_smoke_env(),
@@ -508,7 +511,84 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
         self.assertEqual(
             _extract_payload(result.stdout),
-            {"first_turn": True, "follow_up": False, "unsupported": False},
+            {
+                "topics": ["statistics"],
+                "synthesis_detected": True,
+                "complex_task": True,
+                "article_analogy_simple_rule": False,
+            },
+        )
+
+    def test_synthesis_question_reaches_agent_before_fallbacks(self):
+        result = _run_inline(
+            """
+            from fastapi.testclient import TestClient
+            from types import SimpleNamespace
+            import server
+
+            class FakeExecutor:
+                def __init__(self):
+                    self.calls = []
+
+                def invoke(self, payload):
+                    self.calls.append(payload)
+                    return {
+                        "output": "A p-value measures how surprising the observed evidence would be if the null hypothesis were true.",
+                        "intermediate_steps": [
+                            (
+                                SimpleNamespace(tool="search_statistics", tool_input="p-value"),
+                                "[Source 1: Thinkstats2, page 42]\\nA p-value is the probability of seeing evidence this extreme under the null hypothesis.",
+                            )
+                        ],
+                    }
+
+            fake_executor = FakeExecutor()
+            original_backend = dict(server._backend)
+            original_limits = {
+                "RATE_LIMIT_CHAT_PER_MIN": server.RATE_LIMIT_CHAT_PER_MIN,
+                "IP_RATE_LIMIT_CHAT_PER_DAY": server.IP_RATE_LIMIT_CHAT_PER_DAY,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_HOUR": server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_DAY": server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
+            }
+            try:
+                server._rate_buckets.clear()
+                server.RATE_LIMIT_CHAT_PER_MIN = 10
+                server.IP_RATE_LIMIT_CHAT_PER_DAY = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY = 10
+                server._backend.clear()
+                server._backend.update(executor=fake_executor, chunks=[])
+
+                client = TestClient(server.app)
+                response = client.post(
+                    "/api/chat",
+                    json={"message": "Explain what a p-value is using a legal analogy", "history": []},
+                )
+                payload = response.json()
+                print("PAYLOAD::" + __import__("json").dumps({
+                    "status": response.status_code,
+                    "agent_calls": len(fake_executor.calls),
+                    "grounding_mode": payload.get("grounding_mode"),
+                    "source_count": len(payload.get("sources", [])),
+                }))
+            finally:
+                server._rate_buckets.clear()
+                server._backend.clear()
+                server._backend.update(original_backend)
+                for name, value in original_limits.items():
+                    setattr(server, name, value)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(
+            _extract_payload(result.stdout),
+            {
+                "status": 200,
+                "agent_calls": 1,
+                "grounding_mode": "agent_intermediate_steps",
+                "source_count": 1,
+            },
         )
 
     def test_course_concept_fallback_handles_variable_questions(self):

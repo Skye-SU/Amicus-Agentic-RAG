@@ -169,6 +169,7 @@ CRITICAL RULES:
 2. You may use AT MOST 3 tool searches total. After 3 searches, you MUST immediately write "Thought: I now know the final answer" and provide your Final Answer based on what you found.
 3. If after 2 searches you already have enough information, stop searching immediately and give your Final Answer.
 4. NEVER search the same tool twice with the same or very similar query.
+5. For any substantive question about Python, statistics, NLP, or legal knowledge, you MUST perform at least one relevant tool search before the Final Answer. If the student asks for an analogy, metaphor, comparison, or teaching style, search for the underlying concept first, then synthesize the requested explanation from those retrieved materials. A request for a "legal analogy" is a requested explanation style, not by itself a request to search legal provisions.
 
 Begin!
 
