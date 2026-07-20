@@ -15,7 +15,7 @@ Built with LangChain ReAct Agent · Gemini · ChromaDB
 
 Deployed on Hugging Face Spaces
 
-[Live Demo](https://huggingface.co/spaces/skye210/cls-course-assistant)
+[Live Demo](https://huggingface.co/spaces/skye210/amicus)
 
 ## What is Amicus?
 
