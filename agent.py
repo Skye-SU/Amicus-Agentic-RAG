@@ -170,6 +170,7 @@ CRITICAL RULES:
 3. If after 2 searches you already have enough information, stop searching immediately and give your Final Answer.
 4. NEVER search the same tool twice with the same or very similar query.
 5. For any substantive question about Python, statistics, NLP, or legal knowledge, you MUST perform at least one relevant tool search before the Final Answer. If the student asks for an analogy, metaphor, comparison, or teaching style, search for the underlying concept first, then synthesize the requested explanation from those retrieved materials. A request for a "legal analogy" is a requested explanation style, not by itself a request to search legal provisions.
+6. The first-message greeting rule applies ONLY inside the Final Answer text. Never put greetings, prose, Markdown, or the final tutoring answer before the required Thought/Action/Observation trace.
 
 Begin!
 

@@ -591,6 +591,93 @@ class RoutingTests(unittest.TestCase):
             },
         )
 
+    def test_direct_fallback_rejects_shell_answer_after_agent_failure(self):
+        result = _run_inline(
+            """
+            from fastapi.testclient import TestClient
+            from types import SimpleNamespace
+            import server
+
+            class FailingExecutor:
+                def invoke(self, payload):
+                    raise RuntimeError("agent parse failed")
+
+            doc = SimpleNamespace(
+                page_content=(
+                    "A p-value is the probability of seeing evidence this extreme "
+                    "assuming the null hypothesis is true."
+                ),
+                metadata={
+                    "source": "Thinkstats2",
+                    "topic": "statistics",
+                    "format": "pdf",
+                    "page_number": 42,
+                },
+            )
+
+            shell = (
+                "🪶 Hello and welcome! I'm Amicus. That's a great topic to start our journey into computational thinking. "
+                "Here is how we can understand it\\n\\n"
+                "Feel free to ask me about anything you're learning — whether it's Python, statistics, NLP, or legal analysis."
+            )
+
+            original_backend = dict(server._backend)
+            original_retrieve = server._retrieve_docs
+            original_direct = server._direct_rag_answer
+            original_limits = {
+                "RATE_LIMIT_CHAT_PER_MIN": server.RATE_LIMIT_CHAT_PER_MIN,
+                "IP_RATE_LIMIT_CHAT_PER_DAY": server.IP_RATE_LIMIT_CHAT_PER_DAY,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_HOUR": server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_DAY": server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
+            }
+            try:
+                server._rate_buckets.clear()
+                server.RATE_LIMIT_CHAT_PER_MIN = 10
+                server.IP_RATE_LIMIT_CHAT_PER_DAY = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY = 10
+                server._backend.clear()
+                server._backend.update(executor=FailingExecutor(), chunks=[])
+                server._retrieve_docs = lambda query: [doc]
+                server._direct_rag_answer = lambda query, history, docs: (
+                    shell,
+                    [{"source": "Thinkstats2", "text": doc.page_content}],
+                )
+
+                client = TestClient(server.app)
+                response = client.post(
+                    "/api/chat",
+                    json={"message": "Explain what a p-value is using a legal analogy", "history": []},
+                )
+                payload = response.json()
+                print("PAYLOAD::" + __import__("json").dumps({
+                    "status": response.status_code,
+                    "grounding_mode": payload.get("grounding_mode"),
+                    "direct_shell_returned": payload.get("answer") == shell,
+                    "fallback_mentions_null": "null hypothesis" in payload.get("answer", "").lower(),
+                }))
+            finally:
+                server._rate_buckets.clear()
+                server._backend.clear()
+                server._backend.update(original_backend)
+                server._retrieve_docs = original_retrieve
+                server._direct_rag_answer = original_direct
+                for name, value in original_limits.items():
+                    setattr(server, name, value)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(
+            _extract_payload(result.stdout),
+            {
+                "status": 200,
+                "grounding_mode": "related_materials_only",
+                "direct_shell_returned": False,
+                "fallback_mentions_null": True,
+            },
+        )
+
     def test_course_concept_fallback_handles_variable_questions(self):
         result = _run_inline(
             """

@@ -1646,7 +1646,7 @@ def chat_endpoint(req: ChatRequest, request: Request):
         try:
             answer, sources = _direct_rag_answer(lookup_query, history, fallback_docs)
             answer = _finalize_answer_text(answer, query_context)
-            if answer and not _answer_is_degraded(answer):
+            if answer and not _answer_is_degraded(answer) and _answer_has_substantive_body(answer):
                 return _chat_response(
                     answer,
                     grounding_mode=GROUNDING_MODE_DIRECT_RAG,
@@ -1656,7 +1656,7 @@ def chat_endpoint(req: ChatRequest, request: Request):
             logger.warning("Direct RAG fallback failed: %s", fallback_err)
 
         # Layer 5: Minimal formal answer (absolute last resort with docs)
-        minimal = _build_minimal_formal_answer(query_context, fallback_docs)
+        minimal = _build_course_concept_fallback_answer(query_context, fallback_docs)
         if minimal:
             return _chat_response(
                 _finalize_answer_text(minimal, query_context),
