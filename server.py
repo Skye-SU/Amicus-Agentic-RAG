@@ -55,6 +55,7 @@ from hybrid_retriever import (
     extract_article_reference,
     keyword_search,
     search_legal_authority,
+    search_by_topic,
 )
 from quiz_generator import generate_quiz
 from rag_pipeline import (
@@ -188,7 +189,7 @@ GROUNDING_MODE_DETAILS = {
         "has_reliable_sources": True,
     },
     GROUNDING_MODE_AGENT_STEPS: {
-        "source_basis": "Sources came from agent tool observations captured during answer generation.",
+        "source_basis": "Sources came from agent or controlled retrieval tool observations captured during answer generation.",
         "has_reliable_sources": True,
     },
     GROUNDING_MODE_DIRECT_RAG: {
@@ -990,6 +991,11 @@ def _is_supported_course_query(query_text: str) -> bool:
     return any(topic in SUPPORTED_COURSE_TOPICS for topic in matched)
 
 
+def _requires_agentic_grounding(query_context: dict) -> bool:
+    lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
+    return _is_supported_course_query(lookup_query) or _is_agentic_synthesis_request(lookup_query)
+
+
 def _apply_first_turn_scaffold(answer: str, *, first_turn: bool) -> str:
     cleaned = (answer or "").strip()
     if not cleaned or not first_turn:
@@ -1252,6 +1258,10 @@ def _guess_topic_hint(text: str) -> str | None:
     lowered = (text or "").lower()
     matches = []
     for topic, keywords in TOPIC_HINTS.items():
+        if topic == "legal_knowledge" and _is_agentic_synthesis_request(text):
+            keywords = tuple(
+                keyword for keyword in keywords if keyword not in GENERIC_LEGAL_STYLE_TERMS
+            )
         score = sum(1 for keyword in keywords if keyword in lowered)
         if score:
             matches.append((score, topic))
@@ -1366,6 +1376,119 @@ def _retrieve_docs(query: str, *, k: int = DIRECT_RAG_DOC_LIMIT) -> list:
         seen.add(key)
         unique.append(doc)
     return unique[:k]
+
+
+def _dedupe_docs(docs: list) -> list:
+    seen = set()
+    unique = []
+    for doc in docs:
+        key = (
+            doc.metadata.get("source"),
+            doc.metadata.get("format"),
+            doc.metadata.get("topic"),
+            doc.metadata.get("page_number"),
+            doc.metadata.get("section_title"),
+            doc.metadata.get("cell_index"),
+            doc.metadata.get("article_id"),
+            doc.page_content[:160],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(doc)
+    return unique
+
+
+def _agentic_topic_order(lookup_query: str) -> list[str]:
+    matched = _matched_topic_hints(lookup_query)
+    topic_order = []
+    guessed = _guess_topic_hint(lookup_query)
+    if guessed in matched:
+        topic_order.append(guessed)
+    for topic in SUPPORTED_COURSE_TOPICS:
+        if topic in matched and topic not in topic_order:
+            topic_order.append(topic)
+    return topic_order
+
+
+def _controlled_agentic_retrieval_docs(lookup_query: str) -> list:
+    topic_order = _agentic_topic_order(lookup_query)
+    if not topic_order:
+        return []
+
+    chunks = _backend.get("chunks", [])
+    vectorstore = _backend.get("vs")
+    docs = []
+    for topic in topic_order[:2]:
+        topic_docs = [doc for doc in chunks if doc.metadata.get("topic") == topic]
+        if vectorstore:
+            try:
+                docs.extend(
+                    search_by_topic(
+                        vectorstore,
+                        lookup_query,
+                        topic,
+                        k=DIRECT_RAG_DOC_LIMIT,
+                        topic_documents=topic_docs,
+                        all_documents=chunks,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Controlled agentic topic search failed for %s: %s", topic, exc)
+        if len(docs) < DIRECT_RAG_DOC_LIMIT and topic_docs:
+            docs.extend(keyword_search(topic_docs, lookup_query, k=DIRECT_RAG_DOC_LIMIT))
+
+    docs = _dedupe_docs(docs)
+    if docs:
+        return docs[:DIRECT_RAG_DOC_LIMIT]
+    return _retrieve_docs(lookup_query)
+
+
+def _controlled_agentic_retrieval_answer(query_context: dict, history: list) -> tuple[str, list[dict]]:
+    if not _requires_agentic_grounding(query_context):
+        return "", []
+
+    lookup_query = query_context.get("lookup_query") or query_context.get("current_message") or ""
+    docs = _controlled_agentic_retrieval_docs(lookup_query)
+    if not docs:
+        return "", []
+
+    context = "\n\n---\n\n".join(
+        f"[Observation {idx + 1}: {doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"
+        for idx, doc in enumerate(docs[:DIRECT_RAG_DOC_LIMIT])
+    )
+    synthesis_llm = ChatGoogleGenerativeAI(
+        model=LLM_MODEL,
+        temperature=0.1,
+        google_api_key=GOOGLE_API_KEY,
+        max_tokens=LLM_MAX_OUTPUT_TOKENS,
+        request_timeout=LLM_REQUEST_TIMEOUT,
+    )
+    prompt = f"""You are Amicus, a RAG tutor for legal professionals learning programming, statistics, and NLP.
+
+A retrieval tool has already selected the observations below for the student's question. Use ONLY these observations for technical facts. You may create a legal analogy as an explanatory bridge, but do not treat "legal analogy" as a request to search legal provisions.
+
+Reference observations:
+
+{context}
+
+Student question:
+{lookup_query}
+
+Write a substantive teaching answer. Start with the core idea in plain English, make the requested analogy central when the student asks for one, then clarify the most important misconception or practical implication. Do not mention source filenames or say "based on the materials." Do not use ReAct labels such as Thought, Action, or Observation in the final answer.
+"""
+
+    try:
+        response = synthesis_llm.invoke(prompt)
+        answer = str(response.content).strip()
+        answer = re.sub(r'^#{1,3}\s+', '', answer, flags=re.MULTILINE)
+        answer = _finalize_answer_text(answer, query_context)
+        if answer and not _answer_is_degraded(answer) and _answer_has_substantive_body(answer):
+            return answer, _sources_from_docs(docs)
+    except Exception as exc:
+        logger.warning("Controlled agentic synthesis failed: %s", exc)
+
+    return "", []
 
 
 def _docs_support_query(query: str, docs: list) -> bool:
@@ -1629,14 +1752,26 @@ def chat_endpoint(req: ChatRequest, request: Request):
                 grounding_mode=GROUNDING_MODE_AGENT_STEPS,
                 sources=agent_sources,
             )
-        support_docs = fallback_docs or _retrieve_docs(lookup_query)
-        if support_docs:
-            return _chat_response(
-                agent_answer,
-                grounding_mode=GROUNDING_MODE_RELATED_ONLY,
-                related_materials=_sources_from_docs(support_docs),
-            )
-        return _chat_response(agent_answer, grounding_mode=GROUNDING_MODE_NONE)
+        if _requires_agentic_grounding(query_context):
+            logger.warning("Agent returned no usable tool observations; using controlled agentic retrieval.")
+            is_degraded = True
+        else:
+            support_docs = fallback_docs or _retrieve_docs(lookup_query)
+            if support_docs:
+                return _chat_response(
+                    agent_answer,
+                    grounding_mode=GROUNDING_MODE_RELATED_ONLY,
+                    related_materials=_sources_from_docs(support_docs),
+                )
+            return _chat_response(agent_answer, grounding_mode=GROUNDING_MODE_NONE)
+
+    controlled_answer, controlled_sources = _controlled_agentic_retrieval_answer(query_context, history)
+    if controlled_answer and controlled_sources:
+        return _chat_response(
+            controlled_answer,
+            grounding_mode=GROUNDING_MODE_AGENT_STEPS,
+            sources=controlled_sources,
+        )
 
     # Layer 4: Direct RAG fallback (LLM-generated, no artificial timeout)
     if fallback_docs is None:

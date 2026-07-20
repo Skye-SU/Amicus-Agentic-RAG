@@ -624,6 +624,7 @@ class RoutingTests(unittest.TestCase):
             original_backend = dict(server._backend)
             original_retrieve = server._retrieve_docs
             original_direct = server._direct_rag_answer
+            original_controlled = server._controlled_agentic_retrieval_answer
             original_limits = {
                 "RATE_LIMIT_CHAT_PER_MIN": server.RATE_LIMIT_CHAT_PER_MIN,
                 "IP_RATE_LIMIT_CHAT_PER_DAY": server.IP_RATE_LIMIT_CHAT_PER_DAY,
@@ -643,6 +644,7 @@ class RoutingTests(unittest.TestCase):
                     shell,
                     [{"source": "Thinkstats2", "text": doc.page_content}],
                 )
+                server._controlled_agentic_retrieval_answer = lambda query_context, history: ("", [])
 
                 client = TestClient(server.app)
                 response = client.post(
@@ -662,6 +664,7 @@ class RoutingTests(unittest.TestCase):
                 server._backend.update(original_backend)
                 server._retrieve_docs = original_retrieve
                 server._direct_rag_answer = original_direct
+                server._controlled_agentic_retrieval_answer = original_controlled
                 for name, value in original_limits.items():
                     setattr(server, name, value)
             """,
@@ -675,6 +678,75 @@ class RoutingTests(unittest.TestCase):
                 "grounding_mode": "related_materials_only",
                 "direct_shell_returned": False,
                 "fallback_mentions_null": True,
+            },
+        )
+
+    def test_agent_failure_uses_controlled_agentic_retrieval_before_direct_rag(self):
+        result = _run_inline(
+            """
+            from fastapi.testclient import TestClient
+            import server
+
+            class FailingExecutor:
+                def invoke(self, payload):
+                    raise RuntimeError("agent parse failed")
+
+            original_backend = dict(server._backend)
+            original_controlled = server._controlled_agentic_retrieval_answer
+            original_direct = server._direct_rag_answer
+            original_limits = {
+                "RATE_LIMIT_CHAT_PER_MIN": server.RATE_LIMIT_CHAT_PER_MIN,
+                "IP_RATE_LIMIT_CHAT_PER_DAY": server.IP_RATE_LIMIT_CHAT_PER_DAY,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_HOUR": server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR,
+                "GLOBAL_RATE_LIMIT_CHAT_PER_DAY": server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY,
+            }
+            try:
+                server._rate_buckets.clear()
+                server.RATE_LIMIT_CHAT_PER_MIN = 10
+                server.IP_RATE_LIMIT_CHAT_PER_DAY = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_HOUR = 10
+                server.GLOBAL_RATE_LIMIT_CHAT_PER_DAY = 10
+                server._backend.clear()
+                server._backend.update(executor=FailingExecutor(), chunks=[])
+                server._controlled_agentic_retrieval_answer = lambda query_context, history: (
+                    "Controlled agentic answer about the null hypothesis and p-values.",
+                    [{"source": "Thinkstats2", "text": "p-value under null hypothesis"}],
+                )
+                server._direct_rag_answer = lambda query, history, docs: (_ for _ in ()).throw(
+                    AssertionError("direct RAG should not run before controlled agentic retrieval")
+                )
+
+                client = TestClient(server.app)
+                response = client.post(
+                    "/api/chat",
+                    json={"message": "Explain what a p-value is using a legal analogy", "history": []},
+                )
+                payload = response.json()
+                print("PAYLOAD::" + __import__("json").dumps({
+                    "status": response.status_code,
+                    "grounding_mode": payload.get("grounding_mode"),
+                    "source_count": len(payload.get("sources", [])),
+                    "answer": payload.get("answer"),
+                }))
+            finally:
+                server._rate_buckets.clear()
+                server._backend.clear()
+                server._backend.update(original_backend)
+                server._controlled_agentic_retrieval_answer = original_controlled
+                server._direct_rag_answer = original_direct
+                for name, value in original_limits.items():
+                    setattr(server, name, value)
+            """,
+            env=_smoke_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+        self.assertEqual(
+            _extract_payload(result.stdout),
+            {
+                "status": 200,
+                "grounding_mode": "agent_intermediate_steps",
+                "source_count": 1,
+                "answer": "Controlled agentic answer about the null hypothesis and p-values.",
             },
         )
 
